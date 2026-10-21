@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { EventInfo } from '../types';
-import { Calendar, MapPin, Edit3, UserCheck, LayoutDashboard, Clock, Save, X, Sparkles, Lock, Unlock, LogOut } from 'lucide-react';
+import { Calendar, MapPin, Edit3, UserCheck, LayoutDashboard, Clock, Save, X, Sparkles, Lock, Unlock, LogOut, RefreshCw, Wifi } from 'lucide-react';
 
 interface EventHeaderProps {
   eventInfo: EventInfo;
@@ -11,6 +11,8 @@ interface EventHeaderProps {
   onOrganizerLogout: () => void;
   checkedInCount: number;
   totalExpectedCount: number;
+  isSyncing?: boolean;
+  onManualSync?: () => void;
 }
 
 export const EventHeader: React.FC<EventHeaderProps> = ({
@@ -21,7 +23,9 @@ export const EventHeader: React.FC<EventHeaderProps> = ({
   isOrganizerAuthenticated,
   onOrganizerLogout,
   checkedInCount,
-  totalExpectedCount
+  totalExpectedCount,
+  isSyncing = false,
+  onManualSync
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState<EventInfo>(eventInfo);
@@ -51,6 +55,20 @@ export const EventHeader: React.FC<EventHeaderProps> = ({
                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
                   <Sparkles className="w-3 h-3 text-blue-500" />
                   員工訓練 / 活動報到系統
+                </span>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>手機/電腦即時同步</span>
+                  {onManualSync && (
+                    <button
+                      type="button"
+                      onClick={onManualSync}
+                      className="hover:text-emerald-900 cursor-pointer ml-0.5 p-0.5"
+                      title="立即重新整理同步最新資料"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
+                    </button>
+                  )}
                 </span>
                 <button
                   type="button"

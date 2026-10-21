@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { EventInfo, RegisteredParticipant, CheckInRecord } from './types';
 import {
   loadEventInfo,
@@ -14,6 +14,16 @@ import {
   saveCheckIns,
   buildCombinedAttendeeList
 } from './utils/storage';
+import {
+  fetchEventData,
+  updateEventInfoApi,
+  submitCheckInApi,
+  deleteCheckInApi,
+  resetCheckInsApi,
+  updateRosterApi,
+  addRosterParticipantApi,
+  deleteRosterParticipantApi
+} from './utils/api';
 import { EventHeader } from './components/EventHeader';
 import { CheckInForm } from './components/CheckInForm';
 import { Dashboard } from './components/Dashboard';
@@ -25,6 +35,10 @@ export default function App() {
   const [checkIns, setCheckIns] = useState<CheckInRecord[]>(() => loadCheckIns());
   const [activeMode, setActiveMode] = useState<'checkin' | 'dashboard'>('checkin');
 
+  // Real-time server sync states
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const lastVersionRef = useRef<number>(0);
+
   // Organizer Authentication state (Required password: nick620504)
   const [isOrganizerAuthenticated, setIsOrganizerAuthenticated] = useState<boolean>(() => {
     try {
@@ -35,18 +49,38 @@ export default function App() {
   });
   const [showAuthModal, setShowAuthModal] = useState(false);
 
-  // Sync state changes with LocalStorage
-  useEffect(() => {
-    saveEventInfo(eventInfo);
-  }, [eventInfo]);
+  // Background real-time synchronization with server
+  const syncFromServer = async (showSpinner = false) => {
+    if (showSpinner) setIsSyncing(true);
+    try {
+      const remote = await fetchEventData();
+      if (remote) {
+        if (remote.version !== lastVersionRef.current) {
+          lastVersionRef.current = remote.version;
+          setEventInfo(remote.eventInfo);
+          setRoster(remote.roster);
+          setCheckIns(remote.checkIns);
+          // Also update local cache
+          saveEventInfo(remote.eventInfo);
+          saveRoster(remote.roster);
+          saveCheckIns(remote.checkIns);
+        }
+      }
+    } catch (err) {
+      console.warn('[Sync] Poll error:', err);
+    } finally {
+      if (showSpinner) setIsSyncing(false);
+    }
+  };
 
+  // Initial fetch and periodic polling (every 2.5s for seamless multi-device sync)
   useEffect(() => {
-    saveRoster(roster);
-  }, [roster]);
-
-  useEffect(() => {
-    saveCheckIns(checkIns);
-  }, [checkIns]);
+    syncFromServer(true);
+    const interval = setInterval(() => {
+      syncFromServer(false);
+    }, 2500);
+    return () => clearInterval(interval);
+  }, []);
 
   // Request mode switcher with password gate
   const handleRequestSwitchMode = (targetMode: 'checkin' | 'dashboard') => {
@@ -82,17 +116,17 @@ export default function App() {
     setActiveMode('checkin');
   };
 
-  // Combined real-time attendee comparison list
-  const combinedAttendees = buildCombinedAttendeeList(roster, checkIns);
+  // Handle event info updates (synced to server)
+  const handleUpdateEventInfo = async (updated: EventInfo) => {
+    setEventInfo(updated);
+    saveEventInfo(updated);
+    await updateEventInfoApi(updated);
+    syncFromServer(false);
+  };
 
-  const checkedInCount = combinedAttendees.filter(
-    a => a.status === 'CHECKED_IN' || a.status === 'WALK_IN'
-  ).length;
-
-  // Handle participant check-in submission
-  const handleCheckInSuccess = (record: CheckInRecord) => {
+  // Handle participant check-in submission (synced to server)
+  const handleCheckInSuccess = async (record: CheckInRecord) => {
     setCheckIns(prev => {
-      // If updating an existing check-in
       const existingIdx = prev.findIndex(
         c => (record.participantId && c.participantId === record.participantId) ||
              c.name.trim().toLowerCase() === record.name.trim().toLowerCase()
@@ -104,31 +138,41 @@ export default function App() {
       }
       return [record, ...prev];
     });
+
+    await submitCheckInApi(record);
+    syncFromServer(false);
   };
 
-  // Handle roster Excel/CSV import
-  const handleImportRoster = (newParticipants: RegisteredParticipant[], mode: 'replace' | 'append') => {
+  // Handle roster Excel/CSV import (synced to server)
+  const handleImportRoster = async (newParticipants: RegisteredParticipant[], mode: 'replace' | 'append') => {
     if (mode === 'replace') {
       setRoster(newParticipants);
     } else {
-      // Append mode with duplicate prevention by name
       const existingNames = new Set(roster.map(p => p.name.trim().toLowerCase()));
       const filteredNew = newParticipants.filter(p => !existingNames.has(p.name.trim().toLowerCase()));
       setRoster(prev => [...prev, ...filteredNew]);
     }
+
+    await updateRosterApi(newParticipants, mode);
+    syncFromServer(false);
   };
 
-  const handleAddRosterParticipant = (p: RegisteredParticipant) => {
+  // Handle adding attendee manually (synced to server)
+  const handleAddRosterParticipant = async (p: RegisteredParticipant) => {
     setRoster(prev => [...prev, p]);
+    await addRosterParticipantApi(p);
+    syncFromServer(false);
   };
 
-  const handleDeleteRosterParticipant = (id: string) => {
+  // Handle deleting attendee from roster (synced to server)
+  const handleDeleteRosterParticipant = async (id: string) => {
     setRoster(prev => prev.filter(p => p.id !== id));
+    await deleteRosterParticipantApi(id);
+    syncFromServer(false);
   };
 
-  // Manual check-in performed by organizer
-  const handleManualCheckIn = (attendee: { id: string; name: string; title: string; department?: string }) => {
-    // Generate organizer verified stamp signature canvas
+  // Manual check-in performed by organizer (synced to server)
+  const handleManualCheckIn = async (attendee: { id: string; name: string; title: string; department?: string }) => {
     const canvas = document.createElement('canvas');
     canvas.width = 240;
     canvas.height = 80;
@@ -159,29 +203,45 @@ export default function App() {
       isWalkIn: false,
       notes: '活動承辦人手動協助報到'
     };
-    handleCheckInSuccess(newRecord);
+
+    await handleCheckInSuccess(newRecord);
   };
 
-  const handleRemoveCheckIn = (checkInId: string) => {
+  // Remove single check-in (synced to server)
+  const handleRemoveCheckIn = async (checkInId: string) => {
     setCheckIns(prev => prev.filter(c => c.id !== checkInId && c.participantId !== checkInId));
+    await deleteCheckInApi(checkInId);
+    syncFromServer(false);
   };
 
-  const handleResetAllCheckIns = () => {
+  // Reset all check-in records (synced to server)
+  const handleResetAllCheckIns = async () => {
     setCheckIns([]);
+    await resetCheckInsApi();
+    syncFromServer(false);
   };
+
+  // Combined real-time attendee comparison list
+  const combinedAttendees = buildCombinedAttendeeList(roster, checkIns);
+
+  const checkedInCount = combinedAttendees.filter(
+    a => a.status === 'CHECKED_IN' || a.status === 'WALK_IN'
+  ).length;
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-900 selection:bg-blue-100 selection:text-blue-900">
       {/* Top Application Header */}
       <EventHeader
         eventInfo={eventInfo}
-        onUpdateEventInfo={setEventInfo}
+        onUpdateEventInfo={handleUpdateEventInfo}
         activeMode={activeMode}
         onRequestSwitchMode={handleRequestSwitchMode}
         isOrganizerAuthenticated={isOrganizerAuthenticated}
         onOrganizerLogout={handleOrganizerLogout}
         checkedInCount={checkedInCount}
         totalExpectedCount={roster.length}
+        isSyncing={isSyncing}
+        onManualSync={() => syncFromServer(true)}
       />
 
       {/* Main Content Area */}
@@ -218,7 +278,7 @@ export default function App() {
           <div className="flex items-center gap-2">
             <span className="font-semibold text-slate-700">員工訓練或活動報到管理系統</span>
             <span>·</span>
-            <span>支援 Excel / CSV 匯入、電子手寫簽名、自動即時比對與資料匯出</span>
+            <span>手機與電腦多端即時資料雲端同步</span>
           </div>
           <div className="flex items-center gap-3 text-slate-400">
             <span>目前模式：{activeMode === 'checkin' ? '現場學員手寫簽到' : '承辦人比對後台 (已解鎖)'}</span>
