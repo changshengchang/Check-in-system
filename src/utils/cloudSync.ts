@@ -6,7 +6,7 @@ export interface SyncPayload {
   checkIns: CheckInRecord[];
   updatedAt: number; // millisecond timestamp: Date.now()
   lastModifiedBy: string; // e.g. "手機端-7A2B" or "電腦端-9X4C"
-  actionDescription?: string; // e.g. "新增學員", "刪除學員", "完成報到簽名"
+  actionDescription?: string; // e.g. "新增學員: 張小明"
 }
 
 const KVDB_BUCKET = 'CrJjmEhDSTVdfJwSimtxNm';
@@ -17,7 +17,9 @@ export function getDeviceId(): string {
   try {
     const existing = sessionStorage.getItem('app_device_id');
     if (existing) return existing;
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+    const isMobile =
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+      window.innerWidth < 768;
     const randomHex = Math.random().toString(36).substring(2, 6).toUpperCase();
     const id = `${isMobile ? '手機端' : '電腦端'}-${randomHex}`;
     sessionStorage.setItem('app_device_id', id);
@@ -45,44 +47,20 @@ export function setCloudRoomId(newRoomId: string) {
   }
 }
 
-let isLocalServerAvailable: boolean | null = null;
-
 /**
- * Detect whether backend /api/data is running (Local/Docker) or missing (Vercel static)
- */
-export async function checkBackendAvailability(): Promise<boolean> {
-  if (isLocalServerAvailable !== null) return isLocalServerAvailable;
-  try {
-    const res = await fetch('/api/data', { method: 'GET', headers: { 'Cache-Control': 'no-cache' } });
-    const contentType = res.headers.get('content-type') || '';
-    if (res.ok && contentType.includes('application/json')) {
-      isLocalServerAvailable = true;
-      return true;
-    }
-  } catch {
-    // ignore
-  }
-  isLocalServerAvailable = false;
-  return false;
-}
-
-/**
- * Pull latest data from KVDB cloud storage
+ * Pull latest data from KVDB cloud storage.
+ * CRITICAL: Do NOT set custom headers (like Cache-Control or Pragma) on this GET request,
+ * because custom headers trigger an OPTIONS preflight which KVDB rejects.
+ * Using a simple GET with a query timestamp '?t=...' bypasses browser caching with zero CORS preflight!
  */
 export async function fetchFromCloudRelay(roomId: string): Promise<SyncPayload | null> {
   try {
-    const url = `https://kvdb.io/${KVDB_BUCKET}/${encodeURIComponent(roomId)}?nocache=${Date.now()}`;
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache'
-      }
-    });
+    const url = `https://kvdb.io/${KVDB_BUCKET}/${encodeURIComponent(roomId)}?t=${Date.now()}`;
+    const res = await fetch(url);
     if (!res.ok) return null;
-    const text = await res.text();
-    if (!text || text.trim() === '') return null;
-    return JSON.parse(text);
+    const data = await res.json();
+    if (!data || typeof data.updatedAt !== 'number') return null;
+    return data;
   } catch (err) {
     console.warn('[CloudSync] Fetch failed:', err);
     return null;
@@ -90,7 +68,8 @@ export async function fetchFromCloudRelay(roomId: string): Promise<SyncPayload |
 }
 
 /**
- * Push data to KVDB cloud storage with retry (works globally on Vercel, phones, computers)
+ * Push data to KVDB cloud storage.
+ * Uses Content-Type: application/json which is permitted by KVDB's Access-Control-Allow-Headers.
  */
 export async function pushToCloudRelay(roomId: string, payload: SyncPayload): Promise<boolean> {
   const url = `https://kvdb.io/${KVDB_BUCKET}/${encodeURIComponent(roomId)}`;

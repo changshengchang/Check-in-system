@@ -74,10 +74,15 @@ export default function App() {
 
       // 1. Fetch freshest cloud state first so changes from the other device are never lost
       const freshCloud = await fetchFromCloudRelay(roomId);
-      const base =
-        freshCloud && typeof freshCloud.updatedAt === 'number' && freshCloud.updatedAt > lastSyncedUpdatedAtRef.current
-          ? freshCloud
-          : { eventInfo, roster, checkIns };
+      const baseRoster = freshCloud && Array.isArray(freshCloud.roster) ? freshCloud.roster : roster;
+      const baseCheckIns = freshCloud && Array.isArray(freshCloud.checkIns) ? freshCloud.checkIns : checkIns;
+      const baseEvent = freshCloud && freshCloud.eventInfo ? freshCloud.eventInfo : eventInfo;
+
+      const base = {
+        eventInfo: baseEvent,
+        roster: baseRoster,
+        checkIns: baseCheckIns
+      };
 
       // 2. Apply addition, deletion, or modification
       const next = mutation(base);
@@ -116,7 +121,7 @@ export default function App() {
     } finally {
       setTimeout(() => {
         isBroadcastingRef.current = false;
-      }, 400);
+      }, 300);
     }
   };
 
@@ -152,7 +157,7 @@ export default function App() {
       }
     };
 
-    // Initial check on mount
+    // Immediate initial load on mount to get latest cloud roster
     checkCloudUpdates();
 
     // 1-second auto-sync interval
@@ -261,7 +266,7 @@ export default function App() {
   const handleAddRosterParticipant = (p: RegisteredParticipant) => {
     executeMutationAndBroadcast(`新增學員: ${p.name}`, base => {
       // Avoid duplicate by id or name
-      const exists = base.roster.some(x => x.id === p.id || x.name.trim() === p.name.trim());
+      const exists = base.roster.some(x => x.id === p.id || (x.name.trim() === p.name.trim() && x.title === p.title));
       const nextRoster = exists ? base.roster : [...base.roster, p];
       return {
         ...base,
@@ -276,7 +281,7 @@ export default function App() {
     const targetName = target ? target.name : '學員';
     executeMutationAndBroadcast(`刪除學員: ${targetName}`, base => ({
       ...base,
-      roster: base.roster.filter(p => p.id !== id)
+      roster: base.roster.filter(p => p.id !== id && (target ? p.name !== target.name : true))
     }));
   };
 
