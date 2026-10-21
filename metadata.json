@@ -1,0 +1,6 @@
+{
+  "name": "員工訓練與活動報到管理系統",
+  "description": "提供活動自訂名稱、學員手寫簽名報到、Excel/CSV名冊匯入、自動即時比對已報到與未報到人員、簽到清冊報表匯出功能。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
