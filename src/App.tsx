@@ -6,6 +6,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { EventInfo, RegisteredParticipant, CheckInRecord } from './types';
 import {
+  DEFAULT_EVENT_INFO,
+  DEFAULT_ROSTER,
+  DEFAULT_CHECKINS,
   loadEventInfo,
   saveEventInfo,
   loadRoster,
@@ -15,21 +18,10 @@ import {
   buildCombinedAttendeeList
 } from './utils/storage';
 import {
-  fetchEventData,
-  updateEventInfoApi,
-  submitCheckInApi,
-  deleteCheckInApi,
-  resetCheckInsApi,
-  updateRosterApi,
-  addRosterParticipantApi,
-  deleteRosterParticipantApi
-} from './utils/api';
-import {
+  getDeviceId,
   getCloudRoomId,
-  setCloudRoomId,
   fetchFromCloudRelay,
   pushToCloudRelay,
-  checkBackendAvailability,
   SyncPayload
 } from './utils/cloudSync';
 import { EventHeader } from './components/EventHeader';
@@ -42,12 +34,16 @@ export default function App() {
   const [roster, setRoster] = useState<RegisteredParticipant[]>(() => loadRoster());
   const [checkIns, setCheckIns] = useState<CheckInRecord[]>(() => loadCheckIns());
   const [activeMode, setActiveMode] = useState<'checkin' | 'dashboard'>('checkin');
-  const [roomId, setRoomIdState] = useState<string>(() => getCloudRoomId());
 
-  // Real-time server sync states
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const lastVersionRef = useRef<number>(0);
-  const isUpdatingRef = useRef<boolean>(false);
+  const myDeviceIdRef = useRef<string>(getDeviceId());
+  const lastSyncedUpdatedAtRef = useRef<number>(0);
+  const isBroadcastingRef = useRef<boolean>(false);
+
+  const [lastSyncInfo, setLastSyncInfo] = useState<{
+    time: string;
+    device: string;
+    action: string;
+  } | null>(null);
 
   // Organizer Authentication state (Required password: nick620504)
   const [isOrganizerAuthenticated, setIsOrganizerAuthenticated] = useState<boolean>(() => {
@@ -59,109 +55,123 @@ export default function App() {
   });
   const [showAuthModal, setShowAuthModal] = useState(false);
 
-  // Core function to broadcast changes to both local backend and Vercel Global Cloud Relay
-  const broadcastSync = async (
-    newEventInfo: EventInfo,
-    newRoster: RegisteredParticipant[],
-    newCheckIns: CheckInRecord[]
+  // Core Sync Engine: Apply mutation on the freshest remote base and broadcast to cloud
+  const executeMutationAndBroadcast = async (
+    actionDesc: string,
+    mutation: (base: {
+      eventInfo: EventInfo;
+      roster: RegisteredParticipant[];
+      checkIns: CheckInRecord[];
+    }) => {
+      eventInfo: EventInfo;
+      roster: RegisteredParticipant[];
+      checkIns: CheckInRecord[];
+    }
   ) => {
-    isUpdatingRef.current = true;
-    const newVersion = lastVersionRef.current + 1;
-    lastVersionRef.current = newVersion;
-
-    const payload: SyncPayload = {
-      eventInfo: newEventInfo,
-      roster: newRoster,
-      checkIns: newCheckIns,
-      version: newVersion,
-      updatedAt: new Date().toISOString()
-    };
-
-    // Save locally
-    saveEventInfo(newEventInfo);
-    saveRoster(newRoster);
-    saveCheckIns(newCheckIns);
-
-    // Push to Vercel Global Cloud Relay (works everywhere, across phones, computers, Vercel)
-    pushToCloudRelay(roomId, payload).finally(() => {
-      setTimeout(() => {
-        isUpdatingRef.current = false;
-      }, 500);
-    });
-
-    // Also attempt local backend if available
+    isBroadcastingRef.current = true;
     try {
-      const hasLocal = await checkBackendAvailability();
-      if (hasLocal) {
-        updateEventInfoApi(newEventInfo);
-        updateRosterApi(newRoster, 'replace');
-      }
-    } catch {
-      // ignore
+      const roomId = getCloudRoomId();
+
+      // 1. Fetch freshest cloud state first so changes from the other device are never lost
+      const freshCloud = await fetchFromCloudRelay(roomId);
+      const base =
+        freshCloud && typeof freshCloud.updatedAt === 'number' && freshCloud.updatedAt > lastSyncedUpdatedAtRef.current
+          ? freshCloud
+          : { eventInfo, roster, checkIns };
+
+      // 2. Apply addition, deletion, or modification
+      const next = mutation(base);
+
+      // 3. Stamp with current millisecond timestamp
+      const now = Date.now();
+      lastSyncedUpdatedAtRef.current = now;
+
+      // 4. Update local React state & LocalStorage immediately
+      setEventInfo(next.eventInfo);
+      setRoster(next.roster);
+      setCheckIns(next.checkIns);
+      saveEventInfo(next.eventInfo);
+      saveRoster(next.roster);
+      saveCheckIns(next.checkIns);
+
+      setLastSyncInfo({
+        time: new Date(now).toLocaleTimeString('zh-TW', { hour12: false }),
+        device: myDeviceIdRef.current,
+        action: actionDesc
+      });
+
+      // 5. Broadcast newest state to Cloud Relay (instantly picked up by phone or computer)
+      const payload: SyncPayload = {
+        eventInfo: next.eventInfo,
+        roster: next.roster,
+        checkIns: next.checkIns,
+        updatedAt: now,
+        lastModifiedBy: myDeviceIdRef.current,
+        actionDescription: actionDesc
+      };
+
+      await pushToCloudRelay(roomId, payload);
+    } catch (err) {
+      console.error('[Sync] Error during mutation broadcast:', err);
+    } finally {
+      setTimeout(() => {
+        isBroadcastingRef.current = false;
+      }, 400);
     }
   };
 
-  // Automated Real-time Synchronization Loop (Sub-2s automatic push & pull)
+  // High-frequency Real-time Auto-Sync Loop (Polls every 1s, ensures both phone and computer stay in sync)
   useEffect(() => {
     let isMounted = true;
+    const roomId = getCloudRoomId();
 
-    const syncCheck = async () => {
-      if (isUpdatingRef.current) return;
+    const checkCloudUpdates = async () => {
+      if (isBroadcastingRef.current) return;
       try {
-        // 1. Check Cloud Relay first (supports Vercel serverless / static)
-        const cloudData = await fetchFromCloudRelay(roomId);
-        if (cloudData && cloudData.version !== undefined && isMounted) {
-          if (cloudData.version > lastVersionRef.current) {
-            lastVersionRef.current = cloudData.version;
-            setEventInfo(cloudData.eventInfo);
-            setRoster(cloudData.roster);
-            setCheckIns(cloudData.checkIns);
-            saveEventInfo(cloudData.eventInfo);
-            saveRoster(cloudData.roster);
-            saveCheckIns(cloudData.checkIns);
-            return;
-          }
-        }
+        const remote = await fetchFromCloudRelay(roomId);
+        if (!remote || typeof remote.updatedAt !== 'number' || !isMounted) return;
 
-        // 2. Fallback check local /api/data if available
-        const hasLocal = await checkBackendAvailability();
-        if (hasLocal && isMounted) {
-          const localData = await fetchEventData();
-          if (localData && localData.version > lastVersionRef.current) {
-            lastVersionRef.current = localData.version;
-            setEventInfo(localData.eventInfo);
-            setRoster(localData.roster);
-            setCheckIns(localData.checkIns);
-            saveEventInfo(localData.eventInfo);
-            saveRoster(localData.roster);
-            saveCheckIns(localData.checkIns);
-          }
+        // If cloud data is newer than this device's last synced time, accept and update immediately!
+        if (remote.updatedAt > lastSyncedUpdatedAtRef.current) {
+          lastSyncedUpdatedAtRef.current = remote.updatedAt;
+          setEventInfo(remote.eventInfo);
+          setRoster(remote.roster);
+          setCheckIns(remote.checkIns);
+          saveEventInfo(remote.eventInfo);
+          saveRoster(remote.roster);
+          saveCheckIns(remote.checkIns);
+
+          setLastSyncInfo({
+            time: new Date(remote.updatedAt).toLocaleTimeString('zh-TW', { hour12: false }),
+            device: remote.lastModifiedBy || '遠端裝置',
+            action: remote.actionDescription || '同步最新資料'
+          });
         }
       } catch (err) {
         console.warn('[Sync] Poll error:', err);
       }
     };
 
-    // Initial check
-    syncCheck();
+    // Initial check on mount
+    checkCloudUpdates();
 
-    // Fast automatic sync loop every 1.5 seconds for instant multi-device reflection
-    const timer = setInterval(syncCheck, 1500);
+    // 1-second auto-sync interval
+    const interval = setInterval(checkCloudUpdates, 1000);
 
-    // Recheck immediately when phone screen unlocks or user switches back to browser tab
+    // Instant re-check when phone screen wakes up or browser tab becomes visible
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
-        syncCheck();
+        checkCloudUpdates();
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
       isMounted = false;
-      clearInterval(timer);
+      clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [roomId]);
+  }, []);
 
   // Request mode switcher with password gate
   const handleRequestSwitchMode = (targetMode: 'checkin' | 'dashboard') => {
@@ -197,60 +207,80 @@ export default function App() {
     setActiveMode('checkin');
   };
 
-  // Handle event info updates (synced to server and cloud)
+  // 1. Handle event info updates (synced based on latest write)
   const handleUpdateEventInfo = (updated: EventInfo) => {
-    setEventInfo(updated);
-    broadcastSync(updated, roster, checkIns);
+    executeMutationAndBroadcast('修改活動資訊', base => ({
+      ...base,
+      eventInfo: updated
+    }));
   };
 
-  // Handle participant check-in submission (synced to server and cloud)
+  // 2. Handle participant check-in submission (synced based on latest write)
   const handleCheckInSuccess = (record: CheckInRecord) => {
-    let nextCheckIns: CheckInRecord[];
-    const existingIdx = checkIns.findIndex(
-      c => (record.participantId && c.participantId === record.participantId) ||
-           c.name.trim().toLowerCase() === record.name.trim().toLowerCase()
-    );
-    if (existingIdx >= 0) {
-      nextCheckIns = [...checkIns];
-      nextCheckIns[existingIdx] = record;
-    } else {
-      nextCheckIns = [record, ...checkIns];
-    }
+    executeMutationAndBroadcast(`學員報到: ${record.name}`, base => {
+      const cleanName = record.name.trim().toLowerCase();
+      const existingIdx = base.checkIns.findIndex(
+        c => (record.participantId && c.participantId === record.participantId) ||
+             c.name.trim().toLowerCase() === cleanName
+      );
 
-    setCheckIns(nextCheckIns);
-    broadcastSync(eventInfo, roster, nextCheckIns);
+      let nextCheckIns: CheckInRecord[];
+      if (existingIdx >= 0) {
+        nextCheckIns = [...base.checkIns];
+        nextCheckIns[existingIdx] = record;
+      } else {
+        nextCheckIns = [record, ...base.checkIns];
+      }
+
+      return {
+        ...base,
+        checkIns: nextCheckIns
+      };
+    });
   };
 
-  // Handle roster Excel/CSV import (synced to server and cloud)
+  // 3. Handle roster Excel/CSV import (synced based on latest write)
   const handleImportRoster = (newParticipants: RegisteredParticipant[], mode: 'replace' | 'append') => {
-    let nextRoster: RegisteredParticipant[];
-    if (mode === 'replace') {
-      nextRoster = newParticipants;
-    } else {
-      const existingNames = new Set(roster.map(p => p.name.trim().toLowerCase()));
-      const filteredNew = newParticipants.filter(p => !existingNames.has(p.name.trim().toLowerCase()));
-      nextRoster = [...roster, ...filteredNew];
-    }
-
-    setRoster(nextRoster);
-    broadcastSync(eventInfo, nextRoster, checkIns);
+    executeMutationAndBroadcast(`匯入名冊 (${newParticipants.length}人)`, base => {
+      let nextRoster: RegisteredParticipant[];
+      if (mode === 'replace') {
+        nextRoster = newParticipants;
+      } else {
+        const existingNames = new Set(base.roster.map(p => p.name.trim().toLowerCase()));
+        const filteredNew = newParticipants.filter(p => !existingNames.has(p.name.trim().toLowerCase()));
+        nextRoster = [...base.roster, ...filteredNew];
+      }
+      return {
+        ...base,
+        roster: nextRoster
+      };
+    });
   };
 
-  // Handle adding attendee manually (synced to server and cloud)
+  // 4. Handle adding attendee manually (synced based on latest write)
   const handleAddRosterParticipant = (p: RegisteredParticipant) => {
-    const nextRoster = [...roster, p];
-    setRoster(nextRoster);
-    broadcastSync(eventInfo, nextRoster, checkIns);
+    executeMutationAndBroadcast(`新增學員: ${p.name}`, base => {
+      // Avoid duplicate by id or name
+      const exists = base.roster.some(x => x.id === p.id || x.name.trim() === p.name.trim());
+      const nextRoster = exists ? base.roster : [...base.roster, p];
+      return {
+        ...base,
+        roster: nextRoster
+      };
+    });
   };
 
-  // Handle deleting attendee from roster (synced to server and cloud)
+  // 5. Handle deleting attendee from roster (synced based on latest write)
   const handleDeleteRosterParticipant = (id: string) => {
-    const nextRoster = roster.filter(p => p.id !== id);
-    setRoster(nextRoster);
-    broadcastSync(eventInfo, nextRoster, checkIns);
+    const target = roster.find(p => p.id === id);
+    const targetName = target ? target.name : '學員';
+    executeMutationAndBroadcast(`刪除學員: ${targetName}`, base => ({
+      ...base,
+      roster: base.roster.filter(p => p.id !== id)
+    }));
   };
 
-  // Manual check-in performed by organizer (synced to server and cloud)
+  // 6. Manual check-in performed by organizer (synced based on latest write)
   const handleManualCheckIn = (attendee: { id: string; name: string; title: string; department?: string }) => {
     const canvas = document.createElement('canvas');
     canvas.width = 240;
@@ -286,17 +316,20 @@ export default function App() {
     handleCheckInSuccess(newRecord);
   };
 
-  // Remove single check-in (synced to server and cloud)
+  // 7. Remove single check-in (synced based on latest write)
   const handleRemoveCheckIn = (checkInId: string) => {
-    const nextCheckIns = checkIns.filter(c => c.id !== checkInId && c.participantId !== checkInId);
-    setCheckIns(nextCheckIns);
-    broadcastSync(eventInfo, roster, nextCheckIns);
+    executeMutationAndBroadcast('取消報到紀錄', base => ({
+      ...base,
+      checkIns: base.checkIns.filter(c => c.id !== checkInId && c.participantId !== checkInId)
+    }));
   };
 
-  // Reset all check-in records (synced to server and cloud)
+  // 8. Reset all check-in records (synced based on latest write)
   const handleResetAllCheckIns = () => {
-    setCheckIns([]);
-    broadcastSync(eventInfo, roster, []);
+    executeMutationAndBroadcast('重設所有簽到紀錄', base => ({
+      ...base,
+      checkIns: []
+    }));
   };
 
   // Combined real-time attendee comparison list
@@ -318,7 +351,8 @@ export default function App() {
         onOrganizerLogout={handleOrganizerLogout}
         checkedInCount={checkedInCount}
         totalExpectedCount={roster.length}
-        isSyncing={isSyncing}
+        myDeviceId={myDeviceIdRef.current}
+        lastSyncInfo={lastSyncInfo}
       />
 
       {/* Main Content Area */}
@@ -357,7 +391,7 @@ export default function App() {
             <span>·</span>
             <span className="text-emerald-700 font-medium flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              Vercel 雲端全設備自動即時同步
+              手機與電腦全端以最新更新為基準即時同步
             </span>
           </div>
           <div className="flex items-center gap-3 text-slate-400">

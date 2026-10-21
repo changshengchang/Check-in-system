@@ -4,13 +4,28 @@ export interface SyncPayload {
   eventInfo: EventInfo;
   roster: RegisteredParticipant[];
   checkIns: CheckInRecord[];
-  version: number;
-  updatedAt: string;
+  updatedAt: number; // millisecond timestamp: Date.now()
+  lastModifiedBy: string; // e.g. "手機端-7A2B" or "電腦端-9X4C"
+  actionDescription?: string; // e.g. "新增學員", "刪除學員", "完成報到簽名"
 }
 
 const KVDB_BUCKET = 'CrJjmEhDSTVdfJwSimtxNm';
-const DEFAULT_ROOM_KEY = 'event-2026-training-main';
+export const DEFAULT_ROOM_KEY = 'training-event-4820472b';
 const STORAGE_ROOM_KEY = 'training_app_cloud_room_id';
+
+export function getDeviceId(): string {
+  try {
+    const existing = sessionStorage.getItem('app_device_id');
+    if (existing) return existing;
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+    const randomHex = Math.random().toString(36).substring(2, 6).toUpperCase();
+    const id = `${isMobile ? '手機端' : '電腦端'}-${randomHex}`;
+    sessionStorage.setItem('app_device_id', id);
+    return id;
+  } catch {
+    return '客戶端';
+  }
+}
 
 export function getCloudRoomId(): string {
   try {
@@ -56,10 +71,13 @@ export async function checkBackendAvailability(): Promise<boolean> {
  */
 export async function fetchFromCloudRelay(roomId: string): Promise<SyncPayload | null> {
   try {
-    const url = `https://kvdb.io/${KVDB_BUCKET}/${encodeURIComponent(roomId)}?t=${Date.now()}`;
+    const url = `https://kvdb.io/${KVDB_BUCKET}/${encodeURIComponent(roomId)}?nocache=${Date.now()}`;
     const res = await fetch(url, {
       method: 'GET',
-      headers: { 'Cache-Control': 'no-cache' }
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache'
+      }
     });
     if (!res.ok) return null;
     const text = await res.text();
@@ -72,19 +90,23 @@ export async function fetchFromCloudRelay(roomId: string): Promise<SyncPayload |
 }
 
 /**
- * Push data to KVDB cloud storage (works globally on Vercel, phones, computers)
+ * Push data to KVDB cloud storage with retry (works globally on Vercel, phones, computers)
  */
 export async function pushToCloudRelay(roomId: string, payload: SyncPayload): Promise<boolean> {
-  try {
-    const url = `https://kvdb.io/${KVDB_BUCKET}/${encodeURIComponent(roomId)}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    return res.ok;
-  } catch (err) {
-    console.error('[CloudSync] Push to cloud failed:', err);
-    return false;
+  const url = `https://kvdb.io/${KVDB_BUCKET}/${encodeURIComponent(roomId)}`;
+  const body = JSON.stringify(payload);
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body
+      });
+      if (res.ok) return true;
+    } catch (err) {
+      console.warn(`[CloudSync] Push attempt ${attempt + 1} failed:`, err);
+    }
   }
+  return false;
 }
