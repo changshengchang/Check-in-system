@@ -24,6 +24,14 @@ import {
   addRosterParticipantApi,
   deleteRosterParticipantApi
 } from './utils/api';
+import {
+  getCloudRoomId,
+  setCloudRoomId,
+  fetchFromCloudRelay,
+  pushToCloudRelay,
+  checkBackendAvailability,
+  SyncPayload
+} from './utils/cloudSync';
 import { EventHeader } from './components/EventHeader';
 import { CheckInForm } from './components/CheckInForm';
 import { Dashboard } from './components/Dashboard';
@@ -34,10 +42,12 @@ export default function App() {
   const [roster, setRoster] = useState<RegisteredParticipant[]>(() => loadRoster());
   const [checkIns, setCheckIns] = useState<CheckInRecord[]>(() => loadCheckIns());
   const [activeMode, setActiveMode] = useState<'checkin' | 'dashboard'>('checkin');
+  const [roomId, setRoomIdState] = useState<string>(() => getCloudRoomId());
 
   // Real-time server sync states
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const lastVersionRef = useRef<number>(0);
+  const isUpdatingRef = useRef<boolean>(false);
 
   // Organizer Authentication state (Required password: nick620504)
   const [isOrganizerAuthenticated, setIsOrganizerAuthenticated] = useState<boolean>(() => {
@@ -49,86 +59,109 @@ export default function App() {
   });
   const [showAuthModal, setShowAuthModal] = useState(false);
 
-  // Establish real-time push connection (SSE) for instant cross-device updates
+  // Core function to broadcast changes to both local backend and Vercel Global Cloud Relay
+  const broadcastSync = async (
+    newEventInfo: EventInfo,
+    newRoster: RegisteredParticipant[],
+    newCheckIns: CheckInRecord[]
+  ) => {
+    isUpdatingRef.current = true;
+    const newVersion = lastVersionRef.current + 1;
+    lastVersionRef.current = newVersion;
+
+    const payload: SyncPayload = {
+      eventInfo: newEventInfo,
+      roster: newRoster,
+      checkIns: newCheckIns,
+      version: newVersion,
+      updatedAt: new Date().toISOString()
+    };
+
+    // Save locally
+    saveEventInfo(newEventInfo);
+    saveRoster(newRoster);
+    saveCheckIns(newCheckIns);
+
+    // Push to Vercel Global Cloud Relay (works everywhere, across phones, computers, Vercel)
+    pushToCloudRelay(roomId, payload).finally(() => {
+      setTimeout(() => {
+        isUpdatingRef.current = false;
+      }, 500);
+    });
+
+    // Also attempt local backend if available
+    try {
+      const hasLocal = await checkBackendAvailability();
+      if (hasLocal) {
+        updateEventInfoApi(newEventInfo);
+        updateRosterApi(newRoster, 'replace');
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  // Automated Real-time Synchronization Loop (Sub-2s automatic push & pull)
   useEffect(() => {
-    let eventSource: EventSource | null = null;
-    let reconnectTimeout: any = null;
+    let isMounted = true;
 
-    const connectSSE = () => {
+    const syncCheck = async () => {
+      if (isUpdatingRef.current) return;
       try {
-        eventSource = new EventSource('/api/events');
-
-        eventSource.onopen = () => {
-          setIsSyncing(false);
-        };
-
-        eventSource.onmessage = (event) => {
-          try {
-            const payload = JSON.parse(event.data);
-            if (payload && payload.version !== undefined) {
-              if (payload.version !== lastVersionRef.current) {
-                lastVersionRef.current = payload.version;
-                setEventInfo(payload.eventInfo);
-                setRoster(payload.roster);
-                setCheckIns(payload.checkIns);
-                saveEventInfo(payload.eventInfo);
-                saveRoster(payload.roster);
-                saveCheckIns(payload.checkIns);
-              }
-            }
-          } catch (e) {
-            console.error('[SSE] JSON parse error:', e);
+        // 1. Check Cloud Relay first (supports Vercel serverless / static)
+        const cloudData = await fetchFromCloudRelay(roomId);
+        if (cloudData && cloudData.version !== undefined && isMounted) {
+          if (cloudData.version > lastVersionRef.current) {
+            lastVersionRef.current = cloudData.version;
+            setEventInfo(cloudData.eventInfo);
+            setRoster(cloudData.roster);
+            setCheckIns(cloudData.checkIns);
+            saveEventInfo(cloudData.eventInfo);
+            saveRoster(cloudData.roster);
+            saveCheckIns(cloudData.checkIns);
+            return;
           }
-        };
+        }
 
-        eventSource.onerror = () => {
-          eventSource?.close();
-          // Auto-reconnect quickly
-          clearTimeout(reconnectTimeout);
-          reconnectTimeout = setTimeout(connectSSE, 2000);
-        };
+        // 2. Fallback check local /api/data if available
+        const hasLocal = await checkBackendAvailability();
+        if (hasLocal && isMounted) {
+          const localData = await fetchEventData();
+          if (localData && localData.version > lastVersionRef.current) {
+            lastVersionRef.current = localData.version;
+            setEventInfo(localData.eventInfo);
+            setRoster(localData.roster);
+            setCheckIns(localData.checkIns);
+            saveEventInfo(localData.eventInfo);
+            saveRoster(localData.roster);
+            saveCheckIns(localData.checkIns);
+          }
+        }
       } catch (err) {
-        console.warn('[SSE] Connection error:', err);
+        console.warn('[Sync] Poll error:', err);
       }
     };
 
-    connectSSE();
+    // Initial check
+    syncCheck();
 
-    // Instant catch-up when mobile screen wakes up or browser tab becomes visible
+    // Fast automatic sync loop every 1.5 seconds for instant multi-device reflection
+    const timer = setInterval(syncCheck, 1500);
+
+    // Recheck immediately when phone screen unlocks or user switches back to browser tab
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
-        fetchEventData().then(remote => {
-          if (remote && remote.version !== lastVersionRef.current) {
-            lastVersionRef.current = remote.version;
-            setEventInfo(remote.eventInfo);
-            setRoster(remote.roster);
-            setCheckIns(remote.checkIns);
-          }
-        });
+        syncCheck();
       }
     };
-
     document.addEventListener('visibilitychange', handleVisibility);
 
-    // Regular background pulse check every 4s as safety net
-    const interval = setInterval(() => {
-      fetchEventData().then(remote => {
-        if (remote && remote.version !== lastVersionRef.current) {
-          lastVersionRef.current = remote.version;
-          setEventInfo(remote.eventInfo);
-          setRoster(remote.roster);
-          setCheckIns(remote.checkIns);
-        }
-      });
-    }, 4000);
-
     return () => {
-      clearTimeout(reconnectTimeout);
-      clearInterval(interval);
-      eventSource?.close();
+      isMounted = false;
+      clearInterval(timer);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, []);
+  }, [roomId]);
 
   // Request mode switcher with password gate
   const handleRequestSwitchMode = (targetMode: 'checkin' | 'dashboard') => {
@@ -164,58 +197,61 @@ export default function App() {
     setActiveMode('checkin');
   };
 
-  // Handle event info updates (synced to server)
-  const handleUpdateEventInfo = async (updated: EventInfo) => {
+  // Handle event info updates (synced to server and cloud)
+  const handleUpdateEventInfo = (updated: EventInfo) => {
     setEventInfo(updated);
-    saveEventInfo(updated);
-    await updateEventInfoApi(updated);
+    broadcastSync(updated, roster, checkIns);
   };
 
-  // Handle participant check-in submission (synced to server)
-  const handleCheckInSuccess = async (record: CheckInRecord) => {
-    setCheckIns(prev => {
-      const existingIdx = prev.findIndex(
-        c => (record.participantId && c.participantId === record.participantId) ||
-             c.name.trim().toLowerCase() === record.name.trim().toLowerCase()
-      );
-      if (existingIdx >= 0) {
-        const copy = [...prev];
-        copy[existingIdx] = record;
-        return copy;
-      }
-      return [record, ...prev];
-    });
+  // Handle participant check-in submission (synced to server and cloud)
+  const handleCheckInSuccess = (record: CheckInRecord) => {
+    let nextCheckIns: CheckInRecord[];
+    const existingIdx = checkIns.findIndex(
+      c => (record.participantId && c.participantId === record.participantId) ||
+           c.name.trim().toLowerCase() === record.name.trim().toLowerCase()
+    );
+    if (existingIdx >= 0) {
+      nextCheckIns = [...checkIns];
+      nextCheckIns[existingIdx] = record;
+    } else {
+      nextCheckIns = [record, ...checkIns];
+    }
 
-    await submitCheckInApi(record);
+    setCheckIns(nextCheckIns);
+    broadcastSync(eventInfo, roster, nextCheckIns);
   };
 
-  // Handle roster Excel/CSV import (synced to server)
-  const handleImportRoster = async (newParticipants: RegisteredParticipant[], mode: 'replace' | 'append') => {
+  // Handle roster Excel/CSV import (synced to server and cloud)
+  const handleImportRoster = (newParticipants: RegisteredParticipant[], mode: 'replace' | 'append') => {
+    let nextRoster: RegisteredParticipant[];
     if (mode === 'replace') {
-      setRoster(newParticipants);
+      nextRoster = newParticipants;
     } else {
       const existingNames = new Set(roster.map(p => p.name.trim().toLowerCase()));
       const filteredNew = newParticipants.filter(p => !existingNames.has(p.name.trim().toLowerCase()));
-      setRoster(prev => [...prev, ...filteredNew]);
+      nextRoster = [...roster, ...filteredNew];
     }
 
-    await updateRosterApi(newParticipants, mode);
+    setRoster(nextRoster);
+    broadcastSync(eventInfo, nextRoster, checkIns);
   };
 
-  // Handle adding attendee manually (synced to server)
-  const handleAddRosterParticipant = async (p: RegisteredParticipant) => {
-    setRoster(prev => [...prev, p]);
-    await addRosterParticipantApi(p);
+  // Handle adding attendee manually (synced to server and cloud)
+  const handleAddRosterParticipant = (p: RegisteredParticipant) => {
+    const nextRoster = [...roster, p];
+    setRoster(nextRoster);
+    broadcastSync(eventInfo, nextRoster, checkIns);
   };
 
-  // Handle deleting attendee from roster (synced to server)
-  const handleDeleteRosterParticipant = async (id: string) => {
-    setRoster(prev => prev.filter(p => p.id !== id));
-    await deleteRosterParticipantApi(id);
+  // Handle deleting attendee from roster (synced to server and cloud)
+  const handleDeleteRosterParticipant = (id: string) => {
+    const nextRoster = roster.filter(p => p.id !== id);
+    setRoster(nextRoster);
+    broadcastSync(eventInfo, nextRoster, checkIns);
   };
 
-  // Manual check-in performed by organizer (synced to server)
-  const handleManualCheckIn = async (attendee: { id: string; name: string; title: string; department?: string }) => {
+  // Manual check-in performed by organizer (synced to server and cloud)
+  const handleManualCheckIn = (attendee: { id: string; name: string; title: string; department?: string }) => {
     const canvas = document.createElement('canvas');
     canvas.width = 240;
     canvas.height = 80;
@@ -234,7 +270,7 @@ export default function App() {
       ctx.fillText(new Date().toLocaleTimeString('zh-TW', { hour12: false }), 120, 56);
     }
 
-    const stampDataUrl = canvas.toDataURL('image/png');
+    const stampDataUrl = canvas.toDataURL('image/jpeg', 0.8);
     const newRecord: CheckInRecord = {
       id: `manual-chk-${Date.now()}`,
       participantId: attendee.id,
@@ -247,19 +283,20 @@ export default function App() {
       notes: '活動承辦人手動協助報到'
     };
 
-    await handleCheckInSuccess(newRecord);
+    handleCheckInSuccess(newRecord);
   };
 
-  // Remove single check-in (synced to server)
-  const handleRemoveCheckIn = async (checkInId: string) => {
-    setCheckIns(prev => prev.filter(c => c.id !== checkInId && c.participantId !== checkInId));
-    await deleteCheckInApi(checkInId);
+  // Remove single check-in (synced to server and cloud)
+  const handleRemoveCheckIn = (checkInId: string) => {
+    const nextCheckIns = checkIns.filter(c => c.id !== checkInId && c.participantId !== checkInId);
+    setCheckIns(nextCheckIns);
+    broadcastSync(eventInfo, roster, nextCheckIns);
   };
 
-  // Reset all check-in records (synced to server)
-  const handleResetAllCheckIns = async () => {
+  // Reset all check-in records (synced to server and cloud)
+  const handleResetAllCheckIns = () => {
     setCheckIns([]);
-    await resetCheckInsApi();
+    broadcastSync(eventInfo, roster, []);
   };
 
   // Combined real-time attendee comparison list
@@ -318,7 +355,10 @@ export default function App() {
           <div className="flex items-center gap-2">
             <span className="font-semibold text-slate-700">員工訓練或活動報到管理系統</span>
             <span>·</span>
-            <span>手機與電腦多端即時資料雲端同步</span>
+            <span className="text-emerald-700 font-medium flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              Vercel 雲端全設備自動即時同步
+            </span>
           </div>
           <div className="flex items-center gap-3 text-slate-400">
             <span>目前模式：{activeMode === 'checkin' ? '現場學員手寫簽到' : '承辦人比對後台 (已解鎖)'}</span>

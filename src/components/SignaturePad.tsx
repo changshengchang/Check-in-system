@@ -80,7 +80,8 @@ export const SignaturePad = forwardRef<SignaturePadHandle, SignaturePadProps>(
       getDataUrl: () => {
         const canvas = canvasRef.current;
         if (!canvas) return '';
-        return canvas.toDataURL('image/png');
+        // High-quality compressed JPEG for lightweight cloud sync
+        return canvas.toDataURL('image/jpeg', 0.8);
       },
       isEmpty: () => !hasDrawn
     }));
