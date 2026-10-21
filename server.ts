@@ -82,11 +82,36 @@ function initData() {
   }
 }
 
-function saveData() {
+// Active Server-Sent Events subscribers across all devices
+const sseClients = new Set<express.Response>();
+
+function broadcastData(action: string) {
+  const payload = {
+    action,
+    eventInfo: db.eventInfo,
+    roster: db.roster,
+    checkIns: db.checkIns,
+    version: db.version,
+    updatedAt: db.updatedAt
+  };
+  const message = `data: ${JSON.stringify(payload)}\n\n`;
+
+  for (const client of sseClients) {
+    try {
+      client.write(message);
+    } catch {
+      sseClients.delete(client);
+    }
+  }
+}
+
+function saveData(action: string = 'UPDATE') {
   try {
     db.version = (db.version || 0) + 1;
     db.updatedAt = new Date().toISOString();
     fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2), 'utf-8');
+    // Instantly push to all connected phone and computer clients
+    broadcastData(action);
   } catch (err) {
     console.error('[DB] Error saving data file:', err);
   }
@@ -94,9 +119,47 @@ function saveData() {
 
 initData();
 
-// --- REST API ROUTES ---
+// --- REST API & REAL-TIME STREAM ROUTES ---
 
-// 1. Get full event data (sync endpoint)
+// 1. Server-Sent Events (SSE) Stream for Instant Auto-Sync
+app.get('/api/events', (_req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+
+  // Push immediate current state to the newly connected device
+  const initialPayload = {
+    action: 'INIT',
+    eventInfo: db.eventInfo,
+    roster: db.roster,
+    checkIns: db.checkIns,
+    version: db.version,
+    updatedAt: db.updatedAt
+  };
+  res.write(`data: ${JSON.stringify(initialPayload)}\n\n`);
+
+  sseClients.add(res);
+
+  // Keep-alive heartbeat every 15s to prevent mobile timeouts
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(': heartbeat\n\n');
+    } catch {
+      clearInterval(heartbeat);
+      sseClients.delete(res);
+    }
+  }, 15000);
+
+  _req.on('close', () => {
+    clearInterval(heartbeat);
+    sseClients.delete(res);
+  });
+});
+
+// 2. Get full event data (sync endpoint)
 app.get('/api/data', (_req, res) => {
   res.json({
     eventInfo: db.eventInfo,
@@ -107,7 +170,7 @@ app.get('/api/data', (_req, res) => {
   });
 });
 
-// 2. Update event information
+// 3. Update event information
 app.put('/api/event', (req, res) => {
   const updatedInfo = req.body;
   if (!updatedInfo || !updatedInfo.title) {
@@ -115,11 +178,11 @@ app.put('/api/event', (req, res) => {
     return;
   }
   db.eventInfo = { ...db.eventInfo, ...updatedInfo };
-  saveData();
+  saveData('EVENT_INFO_UPDATED');
   res.json({ success: true, eventInfo: db.eventInfo, version: db.version });
 });
 
-// 3. Submit or update check-in (supports mobile & desktop)
+// 4. Submit or update check-in (supports mobile & desktop)
 app.post('/api/checkins', (req, res) => {
   const record = req.body;
   if (!record || !record.name) {
@@ -140,26 +203,26 @@ app.post('/api/checkins', (req, res) => {
     db.checkIns.unshift(record);
   }
 
-  saveData();
+  saveData('CHECKIN_SUBMITTED');
   res.json({ success: true, record, checkIns: db.checkIns, version: db.version });
 });
 
-// 4. Delete or cancel a check-in
+// 5. Delete or cancel a check-in
 app.delete('/api/checkins/:id', (req, res) => {
   const { id } = req.params;
   db.checkIns = db.checkIns.filter(c => c.id !== id && c.participantId !== id);
-  saveData();
+  saveData('CHECKIN_DELETED');
   res.json({ success: true, checkIns: db.checkIns, version: db.version });
 });
 
-// 5. Reset all check-in records
+// 6. Reset all check-in records
 app.post('/api/checkins/reset', (_req, res) => {
   db.checkIns = [];
-  saveData();
+  saveData('CHECKINS_RESET');
   res.json({ success: true, checkIns: [], version: db.version });
 });
 
-// 6. Import or update roster (from Excel / CSV)
+// 7. Import or update roster (from Excel / CSV)
 app.post('/api/roster', (req, res) => {
   const { roster: newParticipants, mode } = req.body;
   if (!Array.isArray(newParticipants)) {
@@ -176,11 +239,11 @@ app.post('/api/roster', (req, res) => {
     db.roster = [...db.roster, ...toAdd];
   }
 
-  saveData();
+  saveData('ROSTER_UPDATED');
   res.json({ success: true, roster: db.roster, version: db.version });
 });
 
-// 7. Add single attendee manually
+// 8. Add single attendee manually
 app.post('/api/roster/add', (req, res) => {
   const participant = req.body;
   if (!participant || !participant.name) {
@@ -188,15 +251,15 @@ app.post('/api/roster/add', (req, res) => {
     return;
   }
   db.roster.push(participant);
-  saveData();
+  saveData('ROSTER_PARTICIPANT_ADDED');
   res.json({ success: true, roster: db.roster, version: db.version });
 });
 
-// 8. Delete attendee from roster
+// 9. Delete attendee from roster
 app.delete('/api/roster/:id', (req, res) => {
   const { id } = req.params;
   db.roster = db.roster.filter(p => p.id !== id);
-  saveData();
+  saveData('ROSTER_PARTICIPANT_DELETED');
   res.json({ success: true, roster: db.roster, version: db.version });
 });
 

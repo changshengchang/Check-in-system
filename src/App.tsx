@@ -49,37 +49,85 @@ export default function App() {
   });
   const [showAuthModal, setShowAuthModal] = useState(false);
 
-  // Background real-time synchronization with server
-  const syncFromServer = async (showSpinner = false) => {
-    if (showSpinner) setIsSyncing(true);
-    try {
-      const remote = await fetchEventData();
-      if (remote) {
-        if (remote.version !== lastVersionRef.current) {
+  // Establish real-time push connection (SSE) for instant cross-device updates
+  useEffect(() => {
+    let eventSource: EventSource | null = null;
+    let reconnectTimeout: any = null;
+
+    const connectSSE = () => {
+      try {
+        eventSource = new EventSource('/api/events');
+
+        eventSource.onopen = () => {
+          setIsSyncing(false);
+        };
+
+        eventSource.onmessage = (event) => {
+          try {
+            const payload = JSON.parse(event.data);
+            if (payload && payload.version !== undefined) {
+              if (payload.version !== lastVersionRef.current) {
+                lastVersionRef.current = payload.version;
+                setEventInfo(payload.eventInfo);
+                setRoster(payload.roster);
+                setCheckIns(payload.checkIns);
+                saveEventInfo(payload.eventInfo);
+                saveRoster(payload.roster);
+                saveCheckIns(payload.checkIns);
+              }
+            }
+          } catch (e) {
+            console.error('[SSE] JSON parse error:', e);
+          }
+        };
+
+        eventSource.onerror = () => {
+          eventSource?.close();
+          // Auto-reconnect quickly
+          clearTimeout(reconnectTimeout);
+          reconnectTimeout = setTimeout(connectSSE, 2000);
+        };
+      } catch (err) {
+        console.warn('[SSE] Connection error:', err);
+      }
+    };
+
+    connectSSE();
+
+    // Instant catch-up when mobile screen wakes up or browser tab becomes visible
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchEventData().then(remote => {
+          if (remote && remote.version !== lastVersionRef.current) {
+            lastVersionRef.current = remote.version;
+            setEventInfo(remote.eventInfo);
+            setRoster(remote.roster);
+            setCheckIns(remote.checkIns);
+          }
+        });
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    // Regular background pulse check every 4s as safety net
+    const interval = setInterval(() => {
+      fetchEventData().then(remote => {
+        if (remote && remote.version !== lastVersionRef.current) {
           lastVersionRef.current = remote.version;
           setEventInfo(remote.eventInfo);
           setRoster(remote.roster);
           setCheckIns(remote.checkIns);
-          // Also update local cache
-          saveEventInfo(remote.eventInfo);
-          saveRoster(remote.roster);
-          saveCheckIns(remote.checkIns);
         }
-      }
-    } catch (err) {
-      console.warn('[Sync] Poll error:', err);
-    } finally {
-      if (showSpinner) setIsSyncing(false);
-    }
-  };
+      });
+    }, 4000);
 
-  // Initial fetch and periodic polling (every 2.5s for seamless multi-device sync)
-  useEffect(() => {
-    syncFromServer(true);
-    const interval = setInterval(() => {
-      syncFromServer(false);
-    }, 2500);
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(reconnectTimeout);
+      clearInterval(interval);
+      eventSource?.close();
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, []);
 
   // Request mode switcher with password gate
@@ -121,7 +169,6 @@ export default function App() {
     setEventInfo(updated);
     saveEventInfo(updated);
     await updateEventInfoApi(updated);
-    syncFromServer(false);
   };
 
   // Handle participant check-in submission (synced to server)
@@ -140,7 +187,6 @@ export default function App() {
     });
 
     await submitCheckInApi(record);
-    syncFromServer(false);
   };
 
   // Handle roster Excel/CSV import (synced to server)
@@ -154,21 +200,18 @@ export default function App() {
     }
 
     await updateRosterApi(newParticipants, mode);
-    syncFromServer(false);
   };
 
   // Handle adding attendee manually (synced to server)
   const handleAddRosterParticipant = async (p: RegisteredParticipant) => {
     setRoster(prev => [...prev, p]);
     await addRosterParticipantApi(p);
-    syncFromServer(false);
   };
 
   // Handle deleting attendee from roster (synced to server)
   const handleDeleteRosterParticipant = async (id: string) => {
     setRoster(prev => prev.filter(p => p.id !== id));
     await deleteRosterParticipantApi(id);
-    syncFromServer(false);
   };
 
   // Manual check-in performed by organizer (synced to server)
@@ -211,14 +254,12 @@ export default function App() {
   const handleRemoveCheckIn = async (checkInId: string) => {
     setCheckIns(prev => prev.filter(c => c.id !== checkInId && c.participantId !== checkInId));
     await deleteCheckInApi(checkInId);
-    syncFromServer(false);
   };
 
   // Reset all check-in records (synced to server)
   const handleResetAllCheckIns = async () => {
     setCheckIns([]);
     await resetCheckInsApi();
-    syncFromServer(false);
   };
 
   // Combined real-time attendee comparison list
@@ -241,7 +282,6 @@ export default function App() {
         checkedInCount={checkedInCount}
         totalExpectedCount={roster.length}
         isSyncing={isSyncing}
-        onManualSync={() => syncFromServer(true)}
       />
 
       {/* Main Content Area */}

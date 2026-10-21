@@ -56,19 +56,12 @@ export const EventHeader: React.FC<EventHeaderProps> = ({
                   <Sparkles className="w-3 h-3 text-blue-500" />
                   員工訓練 / 活動報到系統
                 </span>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200" title="只要任何一方新增或刪除，所有設備皆會毫秒級自動同步更新">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span>手機/電腦即時同步</span>
-                  {onManualSync && (
-                    <button
-                      type="button"
-                      onClick={onManualSync}
-                      className="hover:text-emerald-900 cursor-pointer ml-0.5 p-0.5"
-                      title="立即重新整理同步最新資料"
-                    >
-                      <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
-                    </button>
-                  )}
+                  <span>手機/電腦自動即時同步</span>
+                  <span className="text-[10px] text-emerald-600 bg-emerald-100/80 px-1 rounded font-medium">
+                    全自動
+                  </span>
                 </span>
                 <button
                   type="button"
