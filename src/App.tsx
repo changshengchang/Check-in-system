@@ -74,7 +74,7 @@ export default function App() {
 
       // 1. Fetch freshest cloud state first so changes from the other device are never lost
       const freshCloud = await fetchFromCloudRelay(roomId);
-      const baseRoster = freshCloud && Array.isArray(freshCloud.roster) ? freshCloud.roster : roster;
+      const baseRoster = freshCloud && Array.isArray(freshCloud.roster) && freshCloud.roster.length > 0 ? freshCloud.roster : roster;
       const baseCheckIns = freshCloud && Array.isArray(freshCloud.checkIns) ? freshCloud.checkIns : checkIns;
       const baseEvent = freshCloud && freshCloud.eventInfo ? freshCloud.eventInfo : eventInfo;
 
@@ -125,9 +125,10 @@ export default function App() {
     }
   };
 
-  // High-frequency Real-time Auto-Sync Loop (Polls every 1s, ensures both phone and computer stay in sync)
+  // High-frequency Real-time Auto-Sync Loop (Self-scheduling timeout loop, ensures both phone and computer stay in sync)
   useEffect(() => {
     let isMounted = true;
+    let timerId: any = null;
     const roomId = getCloudRoomId();
 
     const checkCloudUpdates = async () => {
@@ -153,28 +154,40 @@ export default function App() {
           });
         }
       } catch (err) {
-        console.warn('[Sync] Poll error:', err);
+        // network hiccup
       }
     };
 
-    // Immediate initial load on mount to get latest cloud roster
-    checkCloudUpdates();
+    // Sequential self-scheduling poll loop: prevents request pile-up on slower mobile networks
+    const pollLoop = async () => {
+      if (!isMounted) return;
+      await checkCloudUpdates();
+      if (isMounted) {
+        timerId = setTimeout(pollLoop, 1200);
+      }
+    };
 
-    // 1-second auto-sync interval
-    const interval = setInterval(checkCloudUpdates, 1000);
+    // Immediate initial load on mount
+    pollLoop();
 
-    // Instant re-check when phone screen wakes up or browser tab becomes visible
+    // Instant re-check when phone screen wakes up, browser tab becomes visible, or comes online
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         checkCloudUpdates();
       }
     };
+    const handleOnline = () => {
+      checkCloudUpdates();
+    };
+
     document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('online', handleOnline);
 
     return () => {
       isMounted = false;
-      clearInterval(interval);
+      if (timerId) clearTimeout(timerId);
       document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('online', handleOnline);
     };
   }, []);
 

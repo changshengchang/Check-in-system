@@ -6,12 +6,20 @@ export interface SyncPayload {
   checkIns: CheckInRecord[];
   updatedAt: number; // millisecond timestamp: Date.now()
   lastModifiedBy: string; // e.g. "手機端-7A2B" or "電腦端-9X4C"
-  actionDescription?: string; // e.g. "新增學員: 張小明"
+  actionDescription?: string; // e.g. "學員報到: 張淑珍"
 }
 
 const KVDB_BUCKET = 'CrJjmEhDSTVdfJwSimtxNm';
-export const DEFAULT_ROOM_KEY = 'training-event-4820472b';
-const STORAGE_ROOM_KEY = 'training_app_cloud_room_id';
+export const CANONICAL_ROOM_KEY = 'training-event-4820472b';
+export const LEGACY_ROOM_KEY = 'event-2026-training-main';
+export const DEFAULT_ROOM_KEY = CANONICAL_ROOM_KEY;
+
+// Proactively purge any divergent room keys saved in localStorage
+try {
+  localStorage.removeItem('training_app_cloud_room_id');
+} catch {
+  // ignore
+}
 
 export function getDeviceId(): string {
   try {
@@ -30,62 +38,98 @@ export function getDeviceId(): string {
 }
 
 export function getCloudRoomId(): string {
-  try {
-    const custom = localStorage.getItem(STORAGE_ROOM_KEY);
-    if (custom && custom.trim()) return custom.trim();
-  } catch {
-    // ignore
-  }
-  return DEFAULT_ROOM_KEY;
+  // Always use canonical room key so mobile and desktop never talk to separate channels
+  return CANONICAL_ROOM_KEY;
 }
 
-export function setCloudRoomId(newRoomId: string) {
-  try {
-    localStorage.setItem(STORAGE_ROOM_KEY, newRoomId.trim());
-  } catch {
-    // ignore
+export function setCloudRoomId(_newRoomId: string) {
+  // Intentionally locked to CANONICAL_ROOM_KEY to prevent device divergence
+}
+
+/**
+ * Normalize incoming payload timestamp (handles both millisecond number and legacy ISO string)
+ */
+function normalizePayload(data: any): SyncPayload | null {
+  if (!data || typeof data !== 'object') return null;
+
+  let updatedAtMs = 0;
+  if (typeof data.updatedAt === 'number') {
+    updatedAtMs = data.updatedAt;
+  } else if (typeof data.updatedAt === 'string') {
+    const parsed = new Date(data.updatedAt).getTime();
+    if (!isNaN(parsed)) updatedAtMs = parsed;
   }
+
+  if (updatedAtMs <= 0) return null;
+
+  return {
+    eventInfo: data.eventInfo,
+    roster: Array.isArray(data.roster) ? data.roster : [],
+    checkIns: Array.isArray(data.checkIns) ? data.checkIns : [],
+    updatedAt: updatedAtMs,
+    lastModifiedBy: data.lastModifiedBy || '遠端裝置',
+    actionDescription: data.actionDescription || '更新資料'
+  };
 }
 
 /**
  * Pull latest data from KVDB cloud storage.
- * CRITICAL: Do NOT set custom headers (like Cache-Control or Pragma) on this GET request,
- * because custom headers trigger an OPTIONS preflight which KVDB rejects.
- * Using a simple GET with a query timestamp '?t=...' bypasses browser caching with zero CORS preflight!
+ * Using a simple GET with a query timestamp '?t=...' bypasses browser caching with zero CORS preflight.
  */
-export async function fetchFromCloudRelay(roomId: string): Promise<SyncPayload | null> {
+export async function fetchFromCloudRelay(roomId: string = CANONICAL_ROOM_KEY): Promise<SyncPayload | null> {
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
     const url = `https://kvdb.io/${KVDB_BUCKET}/${encodeURIComponent(roomId)}?t=${Date.now()}`;
-    const res = await fetch(url);
+    const res = await fetch(url, {
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
     if (!res.ok) return null;
-    const data = await res.json();
-    if (!data || typeof data.updatedAt !== 'number') return null;
-    return data;
+    const raw = await res.json();
+    return normalizePayload(raw);
   } catch (err) {
-    console.warn('[CloudSync] Fetch failed:', err);
+    // Silent warn on expected network jitter
     return null;
   }
 }
 
 /**
  * Push data to KVDB cloud storage.
- * Uses Content-Type: application/json which is permitted by KVDB's Access-Control-Allow-Headers.
+ * Synchronously pushes to CANONICAL_ROOM_KEY and simultaneously replicates to LEGACY_ROOM_KEY
+ * so any older client still running cached code receives the update immediately.
  */
-export async function pushToCloudRelay(roomId: string, payload: SyncPayload): Promise<boolean> {
-  const url = `https://kvdb.io/${KVDB_BUCKET}/${encodeURIComponent(roomId)}`;
+export async function pushToCloudRelay(roomId: string = CANONICAL_ROOM_KEY, payload: SyncPayload): Promise<boolean> {
   const body = JSON.stringify(payload);
 
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const pushToTarget = async (targetKey: string): Promise<boolean> => {
+    const url = `https://kvdb.io/${KVDB_BUCKET}/${encodeURIComponent(targetKey)}`;
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body
+        body,
+        signal: controller.signal
       });
-      if (res.ok) return true;
-    } catch (err) {
-      console.warn(`[CloudSync] Push attempt ${attempt + 1} failed:`, err);
+      clearTimeout(timeoutId);
+      return res.ok;
+    } catch {
+      return false;
     }
+  };
+
+  // Push to canonical room
+  const success = await pushToTarget(roomId);
+
+  // Cross-replicate to legacy room in background if roomId is canonical
+  if (roomId === CANONICAL_ROOM_KEY) {
+    pushToTarget(LEGACY_ROOM_KEY).catch(() => {});
   }
-  return false;
+
+  return success;
 }

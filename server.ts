@@ -37,7 +37,10 @@ const DEFAULT_ROSTER = [
   { id: 'p7', name: '楊宗緯', title: '品保工程師', department: '品質工程部', phone: '0978-901-234', email: 'zw.yang@example.com' },
   { id: 'p8', name: '蔡雅芳', title: '客戶關係主管', department: '客戶成功處', phone: '0989-012-345', email: 'yf.tsai@example.com' },
   { id: 'p9', name: '許瑞祥', title: '系統維運工程師', department: 'IT基礎維運組', phone: '0990-123-456', email: 'rx.hsu@example.com' },
-  { id: 'p10', name: '吳佩蓉', title: 'UI/UX 設計專員', department: '設計體驗中心', phone: '0901-234-567', email: 'pr.wu@example.com' }
+  { id: 'p10', name: '吳佩蓉', title: 'UI/UX 設計專員', department: '設計體驗中心', phone: '0901-234-567', email: 'pr.wu@example.com' },
+  { id: 'p11', name: '詹小鎮', title: '營運管理專員', department: '營運管理部', phone: '0911-222-333', email: 'xz.zhan@example.com' },
+  { id: 'p12', name: '楊過', title: '資深系統架構師', department: '技術平台部', phone: '0922-333-444', email: 'guo.yang@example.com' },
+  { id: 'p13', name: '張小風', title: '專案管理師', department: '專案管理處', phone: '0933-444-555', email: 'xf.chang@example.com' }
 ];
 
 interface AppData {

@@ -24,77 +24,15 @@ export const DEFAULT_ROSTER: RegisteredParticipant[] = [
   { id: 'p7', name: '楊宗緯', title: '品保工程師', department: '品質工程部', phone: '0978-901-234', email: 'zw.yang@example.com' },
   { id: 'p8', name: '蔡雅芳', title: '客戶關係主管', department: '客戶成功處', phone: '0989-012-345', email: 'yf.tsai@example.com' },
   { id: 'p9', name: '許瑞祥', title: '系統維運工程師', department: 'IT基礎維運組', phone: '0990-123-456', email: 'rx.hsu@example.com' },
-  { id: 'p10', name: '吳佩蓉', title: 'UI/UX 設計專員', department: '設計體驗中心', phone: '0901-234-567', email: 'pr.wu@example.com' }
+  { id: 'p10', name: '吳佩蓉', title: 'UI/UX 設計專員', department: '設計體驗中心', phone: '0901-234-567', email: 'pr.wu@example.com' },
+  { id: 'p11', name: '詹小鎮', title: '營運管理專員', department: '營運管理部', phone: '0911-222-333', email: 'xz.zhan@example.com' },
+  { id: 'p12', name: '楊過', title: '資深系統架構師', department: '技術平台部', phone: '0922-333-444', email: 'guo.yang@example.com' },
+  { id: 'p13', name: '張小風', title: '專案管理師', department: '專案管理處', phone: '0933-444-555', email: 'xf.chang@example.com' }
 ];
 
-// Helper to generate a default mock signature base64 so initial preview has realistic signatures
-function createSampleSignatureData(name: string): string {
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = 300;
-    canvas.height = 120;
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, 300, 120);
-      ctx.strokeStyle = '#1e3a8a';
-      ctx.lineWidth = 3;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.beginPath();
-      ctx.moveTo(35, 75);
-      ctx.bezierCurveTo(70, 30, 95, 90, 130, 50);
-      ctx.bezierCurveTo(160, 20, 180, 85, 220, 60);
-      ctx.bezierCurveTo(240, 50, 260, 40, 275, 70);
-      ctx.stroke();
-
-      // subtle accent
-      ctx.beginPath();
-      ctx.moveTo(50, 88);
-      ctx.lineTo(240, 82);
-      ctx.strokeStyle = '#3b82f6';
-      ctx.lineWidth = 1.8;
-      ctx.stroke();
-      return canvas.toDataURL('image/png');
-    }
-  } catch (e) {
-    // fallback
-  }
-  return '';
-}
-
-export const DEFAULT_CHECKINS: CheckInRecord[] = [
-  {
-    id: 'c1',
-    participantId: 'p1',
-    name: '王大偉',
-    title: '技術研發總監',
-    department: '資訊研發處',
-    checkInTime: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
-    signatureDataUrl: createSampleSignatureData('王大偉'),
-    isWalkIn: false
-  },
-  {
-    id: 'c2',
-    participantId: 'p3',
-    name: '林美華',
-    title: '資深產品經理',
-    department: '產品創新中心',
-    checkInTime: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
-    signatureDataUrl: createSampleSignatureData('林美華'),
-    isWalkIn: false
-  },
-  {
-    id: 'c3',
-    participantId: 'p4',
-    name: '張淑珍',
-    title: '人力資源經理',
-    department: '人資發展部',
-    checkInTime: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-    signatureDataUrl: createSampleSignatureData('張淑珍'),
-    isWalkIn: false
-  }
-];
+// In production, an event check-in list begins empty (0 checked in).
+// All participants on the roster start with status "未完成報到".
+export const DEFAULT_CHECKINS: CheckInRecord[] = [];
 
 export function loadEventInfo(): EventInfo {
   try {
@@ -117,7 +55,10 @@ export function saveEventInfo(info: EventInfo) {
 export function loadRoster(): RegisteredParticipant[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_ROSTER);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
   } catch (e) {
     console.error('Failed to load roster from localStorage', e);
   }
@@ -135,7 +76,10 @@ export function saveRoster(roster: RegisteredParticipant[]) {
 export function loadCheckIns(): CheckInRecord[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_CHECKINS);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
   } catch (e) {
     console.error('Failed to load check-ins from localStorage', e);
   }
