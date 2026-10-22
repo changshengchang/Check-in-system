@@ -431,8 +431,8 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
             <h3 className="text-2xl font-black text-slate-900 tracking-tight">
               報到手續完成！
             </h3>
-            <p className="text-sm text-slate-500 mt-1">
-              歡迎參加本次培訓與研習課程
+            <p className="text-sm font-bold text-red-600 mt-1.5 tracking-wide">
+              歡迎參加本次訓練與活動,請記得向人事單位告知【覆核】
             </p>
 
             {/* Check-in Details Card */}

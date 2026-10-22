@@ -350,6 +350,82 @@ export default function App() {
     }));
   };
 
+  // 9. Handle toggling HR verification state (synced across all devices in real-time)
+  const handleToggleHrVerify = (attendeeId: string) => {
+    const targetAttendee = combinedAttendees.find(a => a.id === attendeeId);
+    const targetName = targetAttendee ? targetAttendee.name : '學員';
+
+    executeMutationAndBroadcast(`人事覆核狀態變更: ${targetName}`, base => {
+      const isAlreadyCheckedIn = targetAttendee && (targetAttendee.status === 'CHECKED_IN' || targetAttendee.status === 'WALK_IN');
+
+      let nextCheckIns: CheckInRecord[];
+
+      if (isAlreadyCheckedIn) {
+        // Toggle hrVerified on existing checkIn record
+        nextCheckIns = base.checkIns.map(c => {
+          const isMatch =
+            c.id === attendeeId ||
+            c.participantId === attendeeId ||
+            (targetAttendee && c.name.trim().toLowerCase() === targetAttendee.name.trim().toLowerCase());
+
+          if (isMatch) {
+            const nextVerified = !c.hrVerified;
+            return {
+              ...c,
+              hrVerified: nextVerified,
+              hrVerifiedAt: nextVerified ? new Date().toISOString() : undefined
+            };
+          }
+          return c;
+        });
+      } else if (targetAttendee) {
+        // Attendee has not checked in yet, but HR clicks verify -> direct HR verification check-in
+        const now = new Date();
+        const canvas = document.createElement('canvas');
+        canvas.width = 240;
+        canvas.height = 80;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, 240, 80);
+          ctx.strokeStyle = '#4f46e5';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(10, 10, 220, 60);
+          ctx.fillStyle = '#4f46e5';
+          ctx.font = 'bold 15px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('人事單位現場核驗覆核', 120, 36);
+          ctx.font = '11px sans-serif';
+          ctx.fillText(now.toLocaleTimeString('zh-TW', { hour12: false }), 120, 56);
+        }
+        const stampDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+
+        const newRecord: CheckInRecord = {
+          id: `hr-checkin-${now.getTime()}`,
+          participantId: targetAttendee.id,
+          name: targetAttendee.name,
+          title: targetAttendee.title,
+          department: targetAttendee.department,
+          checkInTime: now.toISOString(),
+          signatureDataUrl: stampDataUrl,
+          isWalkIn: false,
+          hrVerified: true,
+          hrVerifiedAt: now.toISOString(),
+          notes: '人事單位現場直接核驗覆核'
+        };
+
+        nextCheckIns = [newRecord, ...base.checkIns];
+      } else {
+        nextCheckIns = base.checkIns;
+      }
+
+      return {
+        ...base,
+        checkIns: nextCheckIns
+      };
+    });
+  };
+
   // Combined real-time attendee comparison list
   const combinedAttendees = buildCombinedAttendeeList(roster, checkIns);
 
@@ -395,6 +471,7 @@ export default function App() {
             onManualCheckIn={handleManualCheckIn}
             onRemoveCheckIn={handleRemoveCheckIn}
             onResetAllCheckIns={handleResetAllCheckIns}
+            onToggleHrVerify={handleToggleHrVerify}
             onNavigateToCheckIn={() => handleRequestSwitchMode('checkin')}
             onLogout={handleOrganizerLogout}
           />

@@ -142,6 +142,7 @@ export function buildCombinedAttendeeList(
       usedCheckInIds.add(matchedCheckIn.id);
       list.push({
         id: p.id,
+        checkInId: matchedCheckIn.id,
         name: p.name,
         title: p.title,
         department: p.department,
@@ -149,7 +150,9 @@ export function buildCombinedAttendeeList(
         checkInTime: matchedCheckIn.checkInTime,
         signatureDataUrl: matchedCheckIn.signatureDataUrl,
         isWalkIn: false,
-        notes: matchedCheckIn.notes
+        notes: matchedCheckIn.notes,
+        hrVerified: Boolean(matchedCheckIn.hrVerified),
+        hrVerifiedAt: matchedCheckIn.hrVerifiedAt
       });
     } else {
       list.push({
@@ -158,7 +161,8 @@ export function buildCombinedAttendeeList(
         title: p.title,
         department: p.department,
         status: 'NOT_CHECKED_IN',
-        isWalkIn: false
+        isWalkIn: false,
+        hrVerified: false
       });
     }
   });
@@ -168,6 +172,7 @@ export function buildCombinedAttendeeList(
     if (!usedCheckInIds.has(c.id)) {
       list.push({
         id: c.id,
+        checkInId: c.id,
         name: c.name,
         title: c.title || '現場追加人員',
         department: c.department,
@@ -175,7 +180,9 @@ export function buildCombinedAttendeeList(
         checkInTime: c.checkInTime,
         signatureDataUrl: c.signatureDataUrl,
         isWalkIn: true,
-        notes: c.notes
+        notes: c.notes,
+        hrVerified: Boolean(c.hrVerified),
+        hrVerifiedAt: c.hrVerifiedAt
       });
     }
   });

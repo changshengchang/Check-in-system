@@ -112,6 +112,7 @@ export function exportToExcel(attendees: CombinedAttendeeView[], eventInfo: Even
     '報到狀態': statusLabels[item.status] || item.status,
     '報到時間': item.checkInTime ? new Date(item.checkInTime).toLocaleString('zh-TW', { hour12: false }) : '—',
     '手寫簽名狀態': item.signatureDataUrl ? '已完成電子簽署' : '未簽署',
+    '人事覆核': item.hrVerified ? '已覆核' : '未覆核',
     '備註/類別': item.isWalkIn ? '現場追加' : '名冊預先報名'
   }));
 
@@ -126,6 +127,7 @@ export function exportToExcel(attendees: CombinedAttendeeView[], eventInfo: Even
     { wch: 16 }, // 報到狀態
     { wch: 22 }, // 報到時間
     { wch: 18 }, // 手寫簽名
+    { wch: 14 }, // 人事覆核
     { wch: 16 }  // 備註
   ];
 
@@ -147,7 +149,7 @@ export function exportToCsv(attendees: CombinedAttendeeView[], eventInfo: EventI
     WALK_IN: '現場臨時報到'
   };
 
-  const headers = ['項次', '姓名', '職稱', '部門/單位', '報到狀態', '報到時間', '手寫簽名狀態', '名單類別'];
+  const headers = ['項次', '姓名', '職稱', '部門/單位', '報到狀態', '報到時間', '手寫簽名狀態', '人事覆核', '名單類別'];
   const rows = attendees.map((item, idx) => [
     idx + 1,
     `"${item.name.replace(/"/g, '""')}"`,
@@ -156,6 +158,7 @@ export function exportToCsv(attendees: CombinedAttendeeView[], eventInfo: EventI
     `"${statusLabels[item.status] || item.status}"`,
     `"${item.checkInTime ? new Date(item.checkInTime).toLocaleString('zh-TW', { hour12: false }) : '—'}"`,
     `"${item.signatureDataUrl ? '已完成電子簽署' : '未簽署'}"`,
+    `"${item.hrVerified ? '已覆核' : '未覆核'}"`,
     `"${item.isWalkIn ? '現場追加' : '名冊預先報名'}"`
   ]);
 

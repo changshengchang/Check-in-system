@@ -44,6 +44,7 @@ interface DashboardProps {
   onManualCheckIn: (attendee: CombinedAttendeeView) => void;
   onRemoveCheckIn: (checkInId: string) => void;
   onResetAllCheckIns: () => void;
+  onToggleHrVerify: (attendeeId: string) => void;
   onNavigateToCheckIn: () => void;
   onLogout?: () => void;
 }
@@ -59,10 +60,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onManualCheckIn,
   onRemoveCheckIn,
   onResetAllCheckIns,
+  onToggleHrVerify,
   onNavigateToCheckIn,
   onLogout
 }) => {
-  const [activeTab, setActiveTab] = useState<'all' | 'checked_in' | 'not_checked_in' | 'walk_in' | 'roster_upload'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'checked_in' | 'not_checked_in' | 'walk_in' | 'hr_verified' | 'roster_upload'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState<string>('all');
   const [selectedSignature, setSelectedSignature] = useState<{ name: string; url: string; time?: string; title?: string } | null>(null);
@@ -77,6 +79,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const notCheckedInList = attendees.filter(a => a.status === 'NOT_CHECKED_IN');
   const walkInList = attendees.filter(a => a.status === 'WALK_IN');
   const totalCheckedIn = checkedInList.length + walkInList.length;
+  const hrVerifiedList = attendees.filter(a => a.hrVerified);
 
   const attendanceRate = totalRosterCount > 0 ? Math.round((checkedInList.length / totalRosterCount) * 100) : 0;
 
@@ -91,6 +94,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     if (activeTab === 'checked_in' && attendee.status !== 'CHECKED_IN' && attendee.status !== 'WALK_IN') return false;
     if (activeTab === 'not_checked_in' && attendee.status !== 'NOT_CHECKED_IN') return false;
     if (activeTab === 'walk_in' && attendee.status !== 'WALK_IN') return false;
+    if (activeTab === 'hr_verified' && !attendee.hrVerified) return false;
 
     // Search query
     if (searchQuery.trim()) {
@@ -372,6 +376,22 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
             <button
               type="button"
+              onClick={() => setActiveTab('hr_verified')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeTab === 'hr_verified'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+              }`}
+            >
+              <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+              <span>人事已覆核</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${activeTab === 'hr_verified' ? 'bg-indigo-700 text-white' : 'bg-indigo-50 text-indigo-700 font-bold'}`}>
+                {hrVerifiedList.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setActiveTab('roster_upload')}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                 activeTab === 'roster_upload'
@@ -501,13 +521,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       <th className="py-3 px-4 text-center">比對報到狀態</th>
                       <th className="py-3 px-4 text-center">報到時間</th>
                       <th className="py-3 px-4 text-center">人工手寫簽名</th>
+                      <th className="py-3 px-4 text-center">人事覆核</th>
                       <th className="py-3 px-4 text-center">承辦人操作</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {filteredAttendees.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="py-12 text-center text-slate-400">
+                        <td colSpan={9} className="py-12 text-center text-slate-400">
                           <Users className="w-8 h-8 mx-auto text-slate-300 mb-2" />
                           <p className="text-sm">查無符合條件之人員資料</p>
                           <p className="text-xs text-slate-400 mt-0.5">請確認搜尋關鍵字或篩選設定</p>
@@ -606,6 +627,42 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                 </button>
                               ) : (
                                 <span className="text-slate-300 italic text-[11px]">無簽章</span>
+                              )}
+                            </td>
+
+                            {/* HR Verification (人事覆核) */}
+                            <td className="py-3 px-4 text-center">
+                              {isChecked ? (
+                                attendee.hrVerified ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => onToggleHrVerify(attendee.id)}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-300 hover:bg-emerald-100 transition-colors cursor-pointer shadow-xs"
+                                    title="人事已覆核確認學員參加。點擊可切換/取消覆核"
+                                  >
+                                    <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                                    <span>已覆核</span>
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => onToggleHrVerify(attendee.id)}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100 transition-colors cursor-pointer"
+                                    title="人事人員點擊此處完成覆核確認"
+                                  >
+                                    <Clock className="w-3.5 h-3.5 text-amber-600" />
+                                    <span>未覆核</span>
+                                  </button>
+                                )
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => onToggleHrVerify(attendee.id)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-slate-400 bg-slate-50 hover:bg-blue-50 hover:text-blue-600 border border-slate-200 transition-colors cursor-pointer"
+                                  title="學員尚未報到。若人事確認其在場，點擊可直接代辦報到並完成人事覆核"
+                                >
+                                  <span>未覆核</span>
+                                </button>
                               )}
                             </td>
 

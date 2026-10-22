@@ -97,6 +97,7 @@ export const PrintableView: React.FC<PrintableViewProps> = ({
                 <th className="py-2.5 px-3 w-28 text-center">報到狀態</th>
                 <th className="py-2.5 px-3 w-36 text-center">報到時間</th>
                 <th className="py-2.5 px-4 text-center">參加人員手寫簽名</th>
+                <th className="py-2.5 px-3 w-24 text-center">人事覆核</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
@@ -147,6 +148,17 @@ export const PrintableView: React.FC<PrintableViewProps> = ({
                         </div>
                       ) : (
                         <span className="text-slate-300 italic text-[11px]">未簽名</span>
+                      )}
+                    </td>
+                    <td className="py-2.5 px-3 text-center">
+                      {a.hrVerified ? (
+                        <span className="inline-block px-2 py-0.5 rounded text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-300">
+                          已覆核
+                        </span>
+                      ) : (
+                        <span className="inline-block px-2 py-0.5 rounded text-[11px] text-slate-400 bg-slate-50 border border-slate-200">
+                          未覆核
+                        </span>
                       )}
                     </td>
                   </tr>
