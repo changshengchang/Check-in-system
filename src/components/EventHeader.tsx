@@ -5,8 +5,8 @@ import { Calendar, MapPin, Edit3, UserCheck, LayoutDashboard, Clock, Save, X, Sp
 interface EventHeaderProps {
   eventInfo: EventInfo;
   onUpdateEventInfo: (updated: EventInfo) => void;
-  activeMode: 'checkin' | 'dashboard';
-  onRequestSwitchMode: (mode: 'checkin' | 'dashboard') => void;
+  activeMode: 'checkin' | 'checkout' | 'dashboard';
+  onRequestSwitchMode: (mode: 'checkin' | 'checkout' | 'dashboard') => void;
   isOrganizerAuthenticated: boolean;
   onOrganizerLogout: () => void;
   checkedInCount: number;
@@ -54,7 +54,7 @@ export const EventHeader: React.FC<EventHeaderProps> = ({
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
                   <Sparkles className="w-3 h-3 text-blue-500" />
-                  員工訓練 / 活動報到系統
+                  苗栗縣三義鄉公所 · 簽到與簽退系統
                 </span>
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200" title="手機與電腦任何一方更新，系統皆會以最新時間為準自動同步">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -97,7 +97,7 @@ export const EventHeader: React.FC<EventHeaderProps> = ({
                 </span>
                 <span className="flex items-center gap-1">
                   <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                  {eventInfo.location || '實體研習教室'}
+                  {eventInfo.location || '三義鄉公所'}
                 </span>
               </div>
             </div>
@@ -107,7 +107,7 @@ export const EventHeader: React.FC<EventHeaderProps> = ({
               {/* Mini progress tracker */}
               <div className="hidden lg:flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 text-xs">
                 <div className="text-right">
-                  <div className="text-slate-500">即時報到率</div>
+                  <div className="text-slate-500">實到率</div>
                   <div className="font-bold text-slate-800">
                     {checkedInCount} / {totalExpectedCount} 人 ({percentage}%)
                   </div>
@@ -129,8 +129,22 @@ export const EventHeader: React.FC<EventHeaderProps> = ({
                   }`}
                 >
                   <UserCheck className="w-4 h-4" />
-                  <span>現場學員報到端</span>
+                  <span>學員簽到端</span>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => onRequestSwitchMode('checkout')}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    activeMode === 'checkout'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                  }`}
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>學員簽退端</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => onRequestSwitchMode('dashboard')}

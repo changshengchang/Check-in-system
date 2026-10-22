@@ -110,8 +110,12 @@ export function exportToExcel(attendees: CombinedAttendeeView[], eventInfo: Even
     '職稱': item.title || '—',
     '部門/單位': item.department || '—',
     '報到狀態': statusLabels[item.status] || item.status,
-    '報到時間': item.checkInTime ? new Date(item.checkInTime).toLocaleString('zh-TW', { hour12: false }) : '—',
-    '手寫簽名狀態': item.signatureDataUrl ? '已完成電子簽署' : '未簽署',
+    '簽到時間': item.checkInTime ? new Date(item.checkInTime).toLocaleString('zh-TW', { hour12: false }) : '—',
+    '簽退時間': item.checkOutTime ? new Date(item.checkOutTime).toLocaleString('zh-TW', { hour12: false }) : (item.checkInTime ? '未簽退' : '—'),
+    '參加時間(計算)': item.durationDisplay || (item.checkInTime ? '研習中(未簽退)' : '—'),
+    '參加時間(分鐘)': item.durationMinutes ?? '—',
+    '手寫簽到狀態': item.signatureDataUrl ? '已簽名' : '未簽名',
+    '手寫簽退狀態': item.checkOutSignatureDataUrl ? '已簽退' : '未簽退',
     '人事覆核': item.hrVerified ? '已覆核' : '未覆核',
     '備註/類別': item.isWalkIn ? '現場追加' : '名冊預先報名'
   }));
@@ -125,17 +129,21 @@ export function exportToExcel(attendees: CombinedAttendeeView[], eventInfo: Even
     { wch: 18 }, // 職稱
     { wch: 18 }, // 部門
     { wch: 16 }, // 報到狀態
-    { wch: 22 }, // 報到時間
-    { wch: 18 }, // 手寫簽名
+    { wch: 22 }, // 簽到時間
+    { wch: 22 }, // 簽退時間
+    { wch: 18 }, // 參加時間
+    { wch: 15 }, // 分鐘數
+    { wch: 15 }, // 簽到簽名
+    { wch: 15 }, // 簽退簽名
     { wch: 14 }, // 人事覆核
     { wch: 16 }  // 備註
   ];
 
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, '報到清冊');
+  XLSX.utils.book_append_sheet(workbook, worksheet, '簽到與簽退清冊');
 
   const safeEventName = eventInfo.title.replace(/[\\/*?:"<>|]/g, '_');
-  const filename = `${safeEventName}_報到名冊比對表_${formatDateForFilename(new Date())}.xlsx`;
+  const filename = `${safeEventName}_報到與簽退名冊_${formatDateForFilename(new Date())}.xlsx`;
   XLSX.writeFile(workbook, filename);
 }
 
@@ -149,7 +157,7 @@ export function exportToCsv(attendees: CombinedAttendeeView[], eventInfo: EventI
     WALK_IN: '現場臨時報到'
   };
 
-  const headers = ['項次', '姓名', '職稱', '部門/單位', '報到狀態', '報到時間', '手寫簽名狀態', '人事覆核', '名單類別'];
+  const headers = ['項次', '姓名', '職稱', '部門/單位', '報到狀態', '簽到時間', '簽退時間', '參加時間', '參加分鐘數', '手寫簽到狀態', '手寫簽退狀態', '人事覆核', '名單類別'];
   const rows = attendees.map((item, idx) => [
     idx + 1,
     `"${item.name.replace(/"/g, '""')}"`,
@@ -157,7 +165,11 @@ export function exportToCsv(attendees: CombinedAttendeeView[], eventInfo: EventI
     `"${(item.department || '—').replace(/"/g, '""')}"`,
     `"${statusLabels[item.status] || item.status}"`,
     `"${item.checkInTime ? new Date(item.checkInTime).toLocaleString('zh-TW', { hour12: false }) : '—'}"`,
-    `"${item.signatureDataUrl ? '已完成電子簽署' : '未簽署'}"`,
+    `"${item.checkOutTime ? new Date(item.checkOutTime).toLocaleString('zh-TW', { hour12: false }) : (item.checkInTime ? '未簽退' : '—')}"`,
+    `"${(item.durationDisplay || (item.checkInTime ? '研習中(未簽退)' : '—')).replace(/"/g, '""')}"`,
+    `"${item.durationMinutes ?? '—'}"`,
+    `"${item.signatureDataUrl ? '已簽名' : '未簽名'}"`,
+    `"${item.checkOutSignatureDataUrl ? '已簽退' : '未簽退'}"`,
     `"${item.hrVerified ? '已覆核' : '未覆核'}"`,
     `"${item.isWalkIn ? '現場追加' : '名冊預先報名'}"`
   ]);

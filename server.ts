@@ -19,12 +19,12 @@ const DATA_FILE = path.join(DATA_DIR, 'app-data.json');
 // Default Seed Data
 const DEFAULT_EVENT_INFO = {
   id: 'event-2026-001',
-  title: '2026年度企業核心職能培訓與內部實務研習',
+  title: '苗栗縣三義鄉公所培訓或活動簽到系統',
   date: '2026-10-21',
   time: '09:00 - 16:30',
-  location: '總部大樓 3F 國際多功能研討廳',
-  organizer: '人力資源發展處 & 營運管理部',
-  notes: '請攜帶筆記型電腦並於 08:50 前完成報到手續'
+  location: '公所 3F 大禮堂 / 多功能研討室',
+  organizer: '苗栗縣三義鄉公所',
+  notes: '請準時出席，並記得於簽到及簽退時完成電子手寫簽名與人事覆核'
 };
 
 const DEFAULT_ROSTER = [
@@ -68,13 +68,18 @@ function initData() {
     if (fs.existsSync(DATA_FILE)) {
       const content = fs.readFileSync(DATA_FILE, 'utf-8');
       const parsed = JSON.parse(content);
+      let loadedEvent = parsed.eventInfo || DEFAULT_EVENT_INFO;
+      if (!loadedEvent.title || loadedEvent.title.includes('2026年度企業核心職能培訓')) {
+        loadedEvent = { ...DEFAULT_EVENT_INFO, ...loadedEvent, title: DEFAULT_EVENT_INFO.title, organizer: DEFAULT_EVENT_INFO.organizer };
+      }
       db = {
-        eventInfo: parsed.eventInfo || DEFAULT_EVENT_INFO,
+        eventInfo: loadedEvent,
         roster: parsed.roster || DEFAULT_ROSTER,
         checkIns: parsed.checkIns || [],
         version: parsed.version || 1,
         updatedAt: parsed.updatedAt || new Date().toISOString()
       };
+      saveData();
       console.log(`[DB] Loaded data from disk. Roster: ${db.roster.length}, CheckIns: ${db.checkIns.length}`);
     } else {
       saveData();

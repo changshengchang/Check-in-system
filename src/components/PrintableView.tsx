@@ -90,14 +90,16 @@ export const PrintableView: React.FC<PrintableViewProps> = ({
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="border-b-2 border-slate-300 bg-slate-100 font-bold text-slate-800">
-                <th className="py-2.5 px-3 w-12 text-center">項次</th>
-                <th className="py-2.5 px-3 w-28">姓名</th>
-                <th className="py-2.5 px-3 w-36">職稱</th>
-                <th className="py-2.5 px-3 w-32">服務單位</th>
-                <th className="py-2.5 px-3 w-28 text-center">報到狀態</th>
-                <th className="py-2.5 px-3 w-36 text-center">報到時間</th>
-                <th className="py-2.5 px-4 text-center">參加人員手寫簽名</th>
-                <th className="py-2.5 px-3 w-24 text-center">人事覆核</th>
+                <th className="py-2.5 px-2 w-10 text-center">項次</th>
+                <th className="py-2.5 px-2 w-24">姓名</th>
+                <th className="py-2.5 px-2 w-28">職稱</th>
+                <th className="py-2.5 px-2 w-28">服務單位</th>
+                <th className="py-2.5 px-2 w-24 text-center">狀態</th>
+                <th className="py-2.5 px-2 w-24 text-center">報到時間</th>
+                <th className="py-2.5 px-2 w-24 text-center">簽退時間</th>
+                <th className="py-2.5 px-2 w-24 text-center">參加時間(計算)</th>
+                <th className="py-2.5 px-3 text-center">簽到/簽退手寫簽名</th>
+                <th className="py-2.5 px-2 w-20 text-center">人事覆核</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
@@ -105,21 +107,21 @@ export const PrintableView: React.FC<PrintableViewProps> = ({
                 const isDone = a.status === 'CHECKED_IN' || a.status === 'WALK_IN';
                 return (
                   <tr key={a.id} className="hover:bg-slate-50/50">
-                    <td className="py-2.5 px-3 text-center text-slate-400 font-mono">
+                    <td className="py-2 px-2 text-center text-slate-400 font-mono text-[11px]">
                       {index + 1}
                     </td>
-                    <td className="py-2.5 px-3 font-bold text-slate-900 text-sm">
+                    <td className="py-2 px-2 font-bold text-slate-900 text-sm">
                       {a.name}
                     </td>
-                    <td className="py-2.5 px-3 text-slate-700">
+                    <td className="py-2 px-2 text-slate-700 text-[11px]">
                       {a.title}
                     </td>
-                    <td className="py-2.5 px-3 text-slate-600">
+                    <td className="py-2 px-2 text-slate-600 text-[11px]">
                       {a.department || '—'}
                     </td>
-                    <td className="py-2.5 px-3 text-center">
+                    <td className="py-2 px-2 text-center">
                       <span
-                        className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold ${
+                        className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${
                           a.status === 'CHECKED_IN'
                             ? 'bg-blue-50 text-blue-700 border border-blue-200'
                             : a.status === 'WALK_IN'
@@ -134,29 +136,49 @@ export const PrintableView: React.FC<PrintableViewProps> = ({
                           : '未報到'}
                       </span>
                     </td>
-                    <td className="py-2.5 px-3 text-center font-mono text-[11px] text-slate-600">
+                    <td className="py-2 px-2 text-center font-mono text-[11px] text-slate-600">
                       {a.checkInTime ? new Date(a.checkInTime).toLocaleTimeString('zh-TW', { hour12: false }) : '—'}
                     </td>
-                    <td className="py-2 px-4 text-center">
-                      {a.signatureDataUrl ? (
-                        <div className="flex justify-center items-center">
-                          <img
-                            src={a.signatureDataUrl}
-                            alt={`${a.name} 簽名`}
-                            className="h-10 max-w-[140px] object-contain border border-slate-200 rounded bg-white p-0.5"
-                          />
-                        </div>
-                      ) : (
-                        <span className="text-slate-300 italic text-[11px]">未簽名</span>
-                      )}
+                    <td className="py-2 px-2 text-center font-mono text-[11px] text-slate-600">
+                      {a.checkOutTime ? new Date(a.checkOutTime).toLocaleTimeString('zh-TW', { hour12: false }) : isDone ? '未簽退' : '—'}
                     </td>
-                    <td className="py-2.5 px-3 text-center">
+                    <td className="py-2 px-2 text-center font-medium text-[11px] text-indigo-700">
+                      {a.durationDisplay || (isDone ? '進行中' : '—')}
+                    </td>
+                    <td className="py-2 px-2 text-center">
+                      <div className="flex justify-center items-center gap-2">
+                        {a.signatureDataUrl ? (
+                          <div className="flex flex-col items-center">
+                            <span className="text-[9px] text-slate-400">簽到</span>
+                            <img
+                              src={a.signatureDataUrl}
+                              alt={`${a.name} 簽名`}
+                              className="h-8 max-w-[90px] object-contain border border-slate-200 rounded bg-white p-0.5"
+                            />
+                          </div>
+                        ) : null}
+                        {a.checkOutSignatureDataUrl ? (
+                          <div className="flex flex-col items-center">
+                            <span className="text-[9px] text-slate-400">簽退</span>
+                            <img
+                              src={a.checkOutSignatureDataUrl}
+                              alt={`${a.name} 簽退`}
+                              className="h-8 max-w-[90px] object-contain border border-slate-200 rounded bg-white p-0.5"
+                            />
+                          </div>
+                        ) : null}
+                        {!a.signatureDataUrl && !a.checkOutSignatureDataUrl && (
+                          <span className="text-slate-300 italic text-[11px]">未簽名</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-2 px-2 text-center">
                       {a.hrVerified ? (
-                        <span className="inline-block px-2 py-0.5 rounded text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-300">
+                        <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-300">
                           已覆核
                         </span>
                       ) : (
-                        <span className="inline-block px-2 py-0.5 rounded text-[11px] text-slate-400 bg-slate-50 border border-slate-200">
+                        <span className="inline-block px-1.5 py-0.5 rounded text-[10px] text-slate-400 bg-slate-50 border border-slate-200">
                           未覆核
                         </span>
                       )}

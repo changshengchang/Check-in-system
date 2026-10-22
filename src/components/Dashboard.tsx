@@ -30,7 +30,8 @@ import {
   ExternalLink,
   Plus,
   LogOut,
-  Lock
+  Lock,
+  Hourglass
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -42,10 +43,12 @@ interface DashboardProps {
   onAddRosterParticipant: (participant: RegisteredParticipant) => void;
   onDeleteRosterParticipant: (id: string) => void;
   onManualCheckIn: (attendee: CombinedAttendeeView) => void;
+  onManualCheckOut: (attendeeId: string) => void;
   onRemoveCheckIn: (checkInId: string) => void;
   onResetAllCheckIns: () => void;
   onToggleHrVerify: (attendeeId: string) => void;
   onNavigateToCheckIn: () => void;
+  onNavigateToCheckOut: () => void;
   onLogout?: () => void;
 }
 
@@ -58,13 +61,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onAddRosterParticipant,
   onDeleteRosterParticipant,
   onManualCheckIn,
+  onManualCheckOut,
   onRemoveCheckIn,
   onResetAllCheckIns,
   onToggleHrVerify,
   onNavigateToCheckIn,
+  onNavigateToCheckOut,
   onLogout
 }) => {
-  const [activeTab, setActiveTab] = useState<'all' | 'checked_in' | 'not_checked_in' | 'walk_in' | 'hr_verified' | 'roster_upload'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'checked_in' | 'not_checked_in' | 'walk_in' | 'checked_out' | 'hr_verified' | 'roster_upload'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState<string>('all');
   const [selectedSignature, setSelectedSignature] = useState<{ name: string; url: string; time?: string; title?: string } | null>(null);
@@ -79,6 +84,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const notCheckedInList = attendees.filter(a => a.status === 'NOT_CHECKED_IN');
   const walkInList = attendees.filter(a => a.status === 'WALK_IN');
   const totalCheckedIn = checkedInList.length + walkInList.length;
+  const checkedOutList = attendees.filter(a => a.checkOutTime);
   const hrVerifiedList = attendees.filter(a => a.hrVerified);
 
   const attendanceRate = totalRosterCount > 0 ? Math.round((checkedInList.length / totalRosterCount) * 100) : 0;
@@ -94,6 +100,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     if (activeTab === 'checked_in' && attendee.status !== 'CHECKED_IN' && attendee.status !== 'WALK_IN') return false;
     if (activeTab === 'not_checked_in' && attendee.status !== 'NOT_CHECKED_IN') return false;
     if (activeTab === 'walk_in' && attendee.status !== 'WALK_IN') return false;
+    if (activeTab === 'checked_out' && !attendee.checkOutTime) return false;
     if (activeTab === 'hr_verified' && !attendee.hrVerified) return false;
 
     // Search query
@@ -197,6 +204,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
           >
             <Sparkles className="w-4 h-4" />
             <span>前往學員簽到端</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onNavigateToCheckOut}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 shadow-xs transition-colors cursor-pointer"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>前往學員簽退端</span>
           </button>
 
           {onLogout && (
@@ -376,6 +392,22 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
             <button
               type="button"
+              onClick={() => setActiveTab('checked_out')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeTab === 'checked_out'
+                  ? 'bg-orange-600 text-white shadow-xs'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+              }`}
+            >
+              <Hourglass className="w-3.5 h-3.5 text-amber-600" />
+              <span>已完成簽退</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${activeTab === 'checked_out' ? 'bg-orange-700 text-white' : 'bg-orange-50 text-orange-700 font-bold'}`}>
+                {checkedOutList.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setActiveTab('hr_verified')}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                 activeTab === 'hr_verified'
@@ -514,21 +546,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
                     <tr>
-                      <th className="py-3 px-4 w-12 text-center">序號</th>
-                      <th className="py-3 px-4">參加人員姓名</th>
-                      <th className="py-3 px-4">職稱 (Job Title)</th>
-                      <th className="py-3 px-4">部門/單位</th>
-                      <th className="py-3 px-4 text-center">比對報到狀態</th>
-                      <th className="py-3 px-4 text-center">報到時間</th>
-                      <th className="py-3 px-4 text-center">人工手寫簽名</th>
-                      <th className="py-3 px-4 text-center">人事覆核</th>
-                      <th className="py-3 px-4 text-center">承辦人操作</th>
+                      <th className="py-3 px-3 w-12 text-center">序號</th>
+                      <th className="py-3 px-3">參加人員姓名</th>
+                      <th className="py-3 px-3">職稱 (Job Title)</th>
+                      <th className="py-3 px-3">部門/單位</th>
+                      <th className="py-3 px-3 text-center">報到狀態</th>
+                      <th className="py-3 px-3 text-center">報到時間</th>
+                      <th className="py-3 px-3 text-center">簽退時間</th>
+                      <th className="py-3 px-3 text-center">參加時間(計算)</th>
+                      <th className="py-3 px-3 text-center">手寫簽名</th>
+                      <th className="py-3 px-3 text-center">人事覆核</th>
+                      <th className="py-3 px-3 text-center">承辦人操作</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {filteredAttendees.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="py-12 text-center text-slate-400">
+                        <td colSpan={11} className="py-12 text-center text-slate-400">
                           <Users className="w-8 h-8 mx-auto text-slate-300 mb-2" />
                           <p className="text-sm">查無符合條件之人員資料</p>
                           <p className="text-xs text-slate-400 mt-0.5">請確認搜尋關鍵字或篩選設定</p>
@@ -540,12 +574,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         return (
                           <tr key={attendee.id} className="hover:bg-slate-50/80 transition-colors">
                             {/* # */}
-                            <td className="py-3 px-4 text-center text-slate-400 font-mono text-[11px]">
+                            <td className="py-3 px-3 text-center text-slate-400 font-mono text-[11px]">
                               {idx + 1}
                             </td>
 
                             {/* Name */}
-                            <td className="py-3 px-4 font-bold text-slate-900 text-sm">
+                            <td className="py-3 px-3 font-bold text-slate-900 text-sm">
                               <div className="flex items-center gap-1.5">
                                 <span>{attendee.name}</span>
                                 {attendee.isWalkIn && (
@@ -557,19 +591,19 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             </td>
 
                             {/* Title */}
-                            <td className="py-3 px-4 text-slate-700">
+                            <td className="py-3 px-3 text-slate-700">
                               <span className="bg-slate-100 px-2 py-0.5 rounded text-[11px]">
                                 {attendee.title}
                               </span>
                             </td>
 
                             {/* Department */}
-                            <td className="py-3 px-4 text-slate-500">
+                            <td className="py-3 px-3 text-slate-500">
                               {attendee.department || '—'}
                             </td>
 
                             {/* Status */}
-                            <td className="py-3 px-4 text-center">
+                            <td className="py-3 px-3 text-center">
                               {attendee.status === 'CHECKED_IN' ? (
                                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                                   <CheckCircle className="w-3 h-3" />
@@ -588,8 +622,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               )}
                             </td>
 
-                            {/* Time */}
-                            <td className="py-3 px-4 text-center font-mono text-slate-600 text-[11px]">
+                            {/* Sign-in Time */}
+                            <td className="py-3 px-3 text-center font-mono text-slate-600 text-[11px]">
                               {attendee.checkInTime ? (
                                 <div>
                                   <div>{new Date(attendee.checkInTime).toLocaleDateString('zh-TW')}</div>
@@ -602,36 +636,85 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               )}
                             </td>
 
-                            {/* Signature Preview */}
-                            <td className="py-3 px-4 text-center">
-                              {attendee.signatureDataUrl ? (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setSelectedSignature({
-                                      name: attendee.name,
-                                      url: attendee.signatureDataUrl!,
-                                      time: attendee.checkInTime,
-                                      title: attendee.title
-                                    })
-                                  }
-                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-200 bg-white hover:bg-blue-50 hover:border-blue-300 transition-colors cursor-pointer group"
-                                  title="點擊放大檢視簽名"
-                                >
-                                  <img
-                                    src={attendee.signatureDataUrl}
-                                    alt="簽名"
-                                    className="h-6 w-14 object-contain bg-white"
-                                  />
-                                  <Eye className="w-3 h-3 text-slate-400 group-hover:text-blue-600" />
-                                </button>
+                            {/* Sign-out Time */}
+                            <td className="py-3 px-3 text-center font-mono text-slate-600 text-[11px]">
+                              {attendee.checkOutTime ? (
+                                <div>
+                                  <div>{new Date(attendee.checkOutTime).toLocaleDateString('zh-TW')}</div>
+                                  <div className="font-bold text-amber-700">
+                                    {new Date(attendee.checkOutTime).toLocaleTimeString('zh-TW', { hour12: false })}
+                                  </div>
+                                </div>
+                              ) : isChecked ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                                  待簽退
+                                </span>
                               ) : (
-                                <span className="text-slate-300 italic text-[11px]">無簽章</span>
+                                <span className="text-slate-300">—</span>
                               )}
                             </td>
 
+                            {/* Participation Duration */}
+                            <td className="py-3 px-3 text-center">
+                              {attendee.durationDisplay ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs">
+                                  <Hourglass className="w-3 h-3 text-indigo-500" />
+                                  <span>{attendee.durationDisplay}</span>
+                                </span>
+                              ) : isChecked ? (
+                                <span className="text-slate-400 italic text-[11px]">進行中</span>
+                              ) : (
+                                <span className="text-slate-300">—</span>
+                              )}
+                            </td>
+
+                            {/* Signatures (Sign-in & Sign-out) */}
+                            <td className="py-3 px-3 text-center">
+                              <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                                {attendee.signatureDataUrl && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setSelectedSignature({
+                                        name: `${attendee.name} (簽到)`,
+                                        url: attendee.signatureDataUrl!,
+                                        time: attendee.checkInTime,
+                                        title: attendee.title
+                                      })
+                                    }
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-slate-200 bg-white hover:bg-blue-50 hover:border-blue-300 transition-colors cursor-pointer group"
+                                    title="點擊放大檢視簽到簽名"
+                                  >
+                                    <span className="text-[10px] text-blue-600 font-semibold">簽到</span>
+                                    <Eye className="w-3 h-3 text-slate-400 group-hover:text-blue-600" />
+                                  </button>
+                                )}
+                                {attendee.checkOutSignatureDataUrl && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setSelectedSignature({
+                                        name: `${attendee.name} (簽退)`,
+                                        url: attendee.checkOutSignatureDataUrl!,
+                                        time: attendee.checkOutTime,
+                                        title: attendee.title
+                                      })
+                                    }
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-amber-200 bg-amber-50/50 hover:bg-amber-100 hover:border-amber-300 transition-colors cursor-pointer group"
+                                    title="點擊放大檢視簽退簽名"
+                                  >
+                                    <span className="text-[10px] text-amber-700 font-semibold">簽退</span>
+                                    <Eye className="w-3 h-3 text-amber-500 group-hover:text-amber-700" />
+                                  </button>
+                                )}
+                                {!attendee.signatureDataUrl && !attendee.checkOutSignatureDataUrl && (
+                                  <span className="text-slate-300 italic text-[11px]">無簽章</span>
+                                )}
+                              </div>
+                            </td>
+
                             {/* HR Verification (人事覆核) */}
-                            <td className="py-3 px-4 text-center">
+                            <td className="py-3 px-3 text-center">
                               {isChecked ? (
                                 attendee.hrVerified ? (
                                   <button
@@ -667,22 +750,38 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             </td>
 
                             {/* Actions */}
-                            <td className="py-3 px-4 text-center">
+                            <td className="py-3 px-3 text-center">
                               {isChecked ? (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (confirm(`確定要取消 ${attendee.name} 的報到紀錄嗎？`)) {
-                                      // find the check-in record id
-                                      const found = checkIns.find(c => c.participantId === attendee.id || c.id === attendee.id);
-                                      if (found) onRemoveCheckIn(found.id);
-                                    }
-                                  }}
-                                  className="text-[11px] text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 transition-colors"
-                                  title="取消報到狀態"
-                                >
-                                  取消報到
-                                </button>
+                                <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                                  {!attendee.checkOutTime ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => onManualCheckOut(attendee.id)}
+                                      className="text-[11px] font-bold text-amber-700 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 px-2 py-1 rounded-lg border border-amber-200 transition-colors cursor-pointer"
+                                      title="學員離席，協助完成簽退並計算參加時間"
+                                    >
+                                      協助簽退
+                                    </button>
+                                  ) : (
+                                    <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                                      已簽退
+                                    </span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (confirm(`確定要取消 ${attendee.name} 的報到紀錄嗎？`)) {
+                                        // find the check-in record id
+                                        const found = checkIns.find(c => c.participantId === attendee.id || c.id === attendee.id);
+                                        if (found) onRemoveCheckIn(found.id);
+                                      }
+                                    }}
+                                    className="text-[11px] text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 transition-colors cursor-pointer"
+                                    title="取消報到狀態"
+                                  >
+                                    取消報到
+                                  </button>
+                                </div>
                               ) : (
                                 <button
                                   type="button"

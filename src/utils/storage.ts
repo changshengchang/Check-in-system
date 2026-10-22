@@ -5,14 +5,39 @@ const STORAGE_KEY_ROSTER = 'training_app_roster';
 const STORAGE_KEY_CHECKINS = 'training_app_checkins';
 
 export const DEFAULT_EVENT_INFO: EventInfo = {
-  id: 'event-2026-001',
-  title: '2026年度企業核心職能培訓與內部實務研習',
-  date: '2026-10-21',
+  id: 'event-sanyi-001',
+  title: '苗栗縣三義鄉公所培訓或活動簽到系統',
+  date: '2026-10-22',
   time: '09:00 - 16:30',
-  location: '總部大樓 3F 國際多功能研討廳',
-  organizer: '人力資源發展處 & 營運管理部',
-  notes: '請攜帶筆記型電腦並於 08:50 前完成報到手續'
+  location: '苗栗縣三義鄉公所 3F 大禮堂會議室',
+  organizer: '苗栗縣三義鄉公所 (人事室 / 社會民政課)',
+  notes: '請於入場時完成手寫簽到，培訓活動結束前請至「學員簽退端」完成手寫簽退以核算參加時數'
 };
+
+/**
+ * Calculates participation duration: check-out time minus check-in time
+ */
+export function calculateParticipationDuration(
+  checkInIso?: string,
+  checkOutIso?: string
+): { minutes: number; display: string } | null {
+  if (!checkInIso || !checkOutIso) return null;
+  const inTime = new Date(checkInIso).getTime();
+  const outTime = new Date(checkOutIso).getTime();
+  if (isNaN(inTime) || isNaN(outTime) || outTime < inTime) return null;
+
+  const totalMinutes = Math.max(1, Math.round((outTime - inTime) / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours === 0) {
+    return { minutes: totalMinutes, display: `${minutes}分鐘` };
+  }
+  return {
+    minutes: totalMinutes,
+    display: `${hours}小時${minutes > 0 ? ` ${minutes}分` : ''}`
+  };
+}
 
 export const DEFAULT_ROSTER: RegisteredParticipant[] = [
   { id: 'p1', name: '王大偉', title: '技術研發總監', department: '資訊研發處', phone: '0912-345-678', email: 'dawei.wang@example.com' },
@@ -37,7 +62,20 @@ export const DEFAULT_CHECKINS: CheckInRecord[] = [];
 export function loadEventInfo(): EventInfo {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_EVENT);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.title === 'string') {
+        // Upgrade legacy default title to Sanyi township default
+        if (parsed.title === '2026年度企業核心職能培訓與內部實務研習') {
+          parsed.title = DEFAULT_EVENT_INFO.title;
+          parsed.location = DEFAULT_EVENT_INFO.location;
+          parsed.organizer = DEFAULT_EVENT_INFO.organizer;
+          parsed.notes = DEFAULT_EVENT_INFO.notes;
+          saveEventInfo(parsed);
+        }
+        return parsed;
+      }
+    }
   } catch (e) {
     console.error('Failed to load event info from localStorage', e);
   }
@@ -140,6 +178,11 @@ export function buildCombinedAttendeeList(
 
     if (matchedCheckIn) {
       usedCheckInIds.add(matchedCheckIn.id);
+      const calcDuration = calculateParticipationDuration(
+        matchedCheckIn.checkInTime,
+        matchedCheckIn.checkOutTime
+      );
+
       list.push({
         id: p.id,
         checkInId: matchedCheckIn.id,
@@ -152,7 +195,11 @@ export function buildCombinedAttendeeList(
         isWalkIn: false,
         notes: matchedCheckIn.notes,
         hrVerified: Boolean(matchedCheckIn.hrVerified),
-        hrVerifiedAt: matchedCheckIn.hrVerifiedAt
+        hrVerifiedAt: matchedCheckIn.hrVerifiedAt,
+        checkOutTime: matchedCheckIn.checkOutTime,
+        checkOutSignatureDataUrl: matchedCheckIn.checkOutSignatureDataUrl,
+        durationMinutes: calcDuration?.minutes || matchedCheckIn.durationMinutes,
+        durationDisplay: calcDuration?.display || matchedCheckIn.durationDisplay
       });
     } else {
       list.push({
@@ -170,6 +217,11 @@ export function buildCombinedAttendeeList(
   // Step 2: Any check-in record not matched to a roster attendee is a walk-in
   checkIns.forEach(c => {
     if (!usedCheckInIds.has(c.id)) {
+      const calcDuration = calculateParticipationDuration(
+        c.checkInTime,
+        c.checkOutTime
+      );
+
       list.push({
         id: c.id,
         checkInId: c.id,
@@ -182,7 +234,11 @@ export function buildCombinedAttendeeList(
         isWalkIn: true,
         notes: c.notes,
         hrVerified: Boolean(c.hrVerified),
-        hrVerifiedAt: c.hrVerifiedAt
+        hrVerifiedAt: c.hrVerifiedAt,
+        checkOutTime: c.checkOutTime,
+        checkOutSignatureDataUrl: c.checkOutSignatureDataUrl,
+        durationMinutes: calcDuration?.minutes || c.durationMinutes,
+        durationDisplay: calcDuration?.display || c.durationDisplay
       });
     }
   });

@@ -15,7 +15,8 @@ import {
   saveRoster,
   loadCheckIns,
   saveCheckIns,
-  buildCombinedAttendeeList
+  buildCombinedAttendeeList,
+  calculateParticipationDuration
 } from './utils/storage';
 import {
   getDeviceId,
@@ -26,6 +27,7 @@ import {
 } from './utils/cloudSync';
 import { EventHeader } from './components/EventHeader';
 import { CheckInForm } from './components/CheckInForm';
+import { CheckOutForm } from './components/CheckOutForm';
 import { Dashboard } from './components/Dashboard';
 import { OrganizerAuthModal } from './components/OrganizerAuthModal';
 
@@ -33,7 +35,7 @@ export default function App() {
   const [eventInfo, setEventInfo] = useState<EventInfo>(() => loadEventInfo());
   const [roster, setRoster] = useState<RegisteredParticipant[]>(() => loadRoster());
   const [checkIns, setCheckIns] = useState<CheckInRecord[]>(() => loadCheckIns());
-  const [activeMode, setActiveMode] = useState<'checkin' | 'dashboard'>('checkin');
+  const [activeMode, setActiveMode] = useState<'checkin' | 'checkout' | 'dashboard'>('checkin');
 
   const myDeviceIdRef = useRef<string>(getDeviceId());
   const lastSyncedUpdatedAtRef = useRef<number>(0);
@@ -192,9 +194,9 @@ export default function App() {
   }, []);
 
   // Request mode switcher with password gate
-  const handleRequestSwitchMode = (targetMode: 'checkin' | 'dashboard') => {
-    if (targetMode === 'checkin') {
-      setActiveMode('checkin');
+  const handleRequestSwitchMode = (targetMode: 'checkin' | 'checkout' | 'dashboard') => {
+    if (targetMode === 'checkin' || targetMode === 'checkout') {
+      setActiveMode(targetMode);
     } else {
       if (isOrganizerAuthenticated) {
         setActiveMode('dashboard');
@@ -334,6 +336,96 @@ export default function App() {
     handleCheckInSuccess(newRecord);
   };
 
+  // 6b. Check-out success submission from CheckOutForm
+  const handleCheckOutSuccess = (
+    checkInId: string,
+    checkOutTime: string,
+    signatureDataUrl: string,
+    durationMinutes: number,
+    durationDisplay: string
+  ) => {
+    const existingCheckIn = checkIns.find(c => c.id === checkInId);
+    const participantName = existingCheckIn ? existingCheckIn.name : '學員';
+
+    executeMutationAndBroadcast(`學員簽退: ${participantName} (${durationDisplay})`, base => {
+      const nextCheckIns = base.checkIns.map(c => {
+        if (c.id === checkInId) {
+          return {
+            ...c,
+            checkOutTime,
+            checkOutSignatureDataUrl: signatureDataUrl,
+            durationMinutes,
+            durationDisplay
+          };
+        }
+        return c;
+      });
+
+      return {
+        ...base,
+        checkIns: nextCheckIns
+      };
+    });
+  };
+
+  // 6c. Manual check-out performed by organizer from Dashboard
+  const handleManualCheckOut = (attendeeId: string) => {
+    const target = combinedAttendees.find(a => a.id === attendeeId);
+    if (!target) return;
+
+    const checkInRecord = checkIns.find(
+      c => c.id === attendeeId || c.participantId === attendeeId || c.name.trim().toLowerCase() === target.name.trim().toLowerCase()
+    );
+    if (!checkInRecord) {
+      alert('該學員尚未完成報到，無法進行簽退');
+      return;
+    }
+
+    const checkOutTime = new Date().toISOString();
+    const duration = calculateParticipationDuration(checkInRecord.checkInTime, checkOutTime);
+
+    // Create a virtual stamp for manual sign-out
+    const canvas = document.createElement('canvas');
+    canvas.width = 240;
+    canvas.height = 80;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, 240, 80);
+      ctx.strokeStyle = '#d97706';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(10, 10, 220, 60);
+      ctx.fillStyle = '#d97706';
+      ctx.font = 'bold 15px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('承辦人員現場協助簽退', 120, 36);
+      ctx.font = '11px sans-serif';
+      ctx.fillText(new Date().toLocaleTimeString('zh-TW', { hour12: false }), 120, 56);
+    }
+    const stampDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+
+    executeMutationAndBroadcast(`承辦人協助簽退: ${target.name}`, base => {
+      const nextCheckIns = base.checkIns.map(c => {
+        if (c.id === checkInRecord.id) {
+          return {
+            ...c,
+            checkOutTime,
+            checkOutSignatureDataUrl: stampDataUrl,
+            durationMinutes: duration?.minutes ?? 0,
+            durationDisplay: duration?.display ?? '0分鐘',
+            notes: c.notes ? `${c.notes} / 承辦人協助簽退` : '承辦人協助簽退'
+          };
+        }
+        return c;
+      });
+
+      return {
+        ...base,
+        checkIns: nextCheckIns
+      };
+    });
+  };
+
   // 7. Remove single check-in (synced based on latest write)
   const handleRemoveCheckIn = (checkInId: string) => {
     executeMutationAndBroadcast('取消報到紀錄', base => ({
@@ -459,6 +551,15 @@ export default function App() {
             onCheckInSuccess={handleCheckInSuccess}
             onNavigateToDashboard={() => handleRequestSwitchMode('dashboard')}
           />
+        ) : activeMode === 'checkout' ? (
+          <CheckOutForm
+            eventInfo={eventInfo}
+            attendees={combinedAttendees}
+            existingCheckIns={checkIns}
+            onCheckOutSuccess={handleCheckOutSuccess}
+            onNavigateToCheckIn={() => handleRequestSwitchMode('checkin')}
+            onNavigateToDashboard={() => handleRequestSwitchMode('dashboard')}
+          />
         ) : (
           <Dashboard
             eventInfo={eventInfo}
@@ -469,10 +570,12 @@ export default function App() {
             onAddRosterParticipant={handleAddRosterParticipant}
             onDeleteRosterParticipant={handleDeleteRosterParticipant}
             onManualCheckIn={handleManualCheckIn}
+            onManualCheckOut={handleManualCheckOut}
             onRemoveCheckIn={handleRemoveCheckIn}
             onResetAllCheckIns={handleResetAllCheckIns}
             onToggleHrVerify={handleToggleHrVerify}
             onNavigateToCheckIn={() => handleRequestSwitchMode('checkin')}
+            onNavigateToCheckOut={() => handleRequestSwitchMode('checkout')}
             onLogout={handleOrganizerLogout}
           />
         )}
@@ -482,7 +585,7 @@ export default function App() {
       <footer className="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-slate-700">員工訓練或活動報到管理系統</span>
+            <span className="font-semibold text-slate-700">苗栗縣三義鄉公所培訓或活動簽到系統</span>
             <span>·</span>
             <span className="text-emerald-700 font-medium flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -490,14 +593,21 @@ export default function App() {
             </span>
           </div>
           <div className="flex items-center gap-3 text-slate-400">
-            <span>目前模式：{activeMode === 'checkin' ? '現場學員手寫簽到' : '承辦人比對後台 (已解鎖)'}</span>
+            <span>
+              目前模式：
+              {activeMode === 'checkin'
+                ? '現場學員手寫簽到'
+                : activeMode === 'checkout'
+                ? '學員簽退端 (參加時間主動計算)'
+                : '承辦人比對後台 (已解鎖)'}
+            </span>
             <span>·</span>
             <button
               type="button"
-              onClick={() => handleRequestSwitchMode(activeMode === 'checkin' ? 'dashboard' : 'checkin')}
+              onClick={() => handleRequestSwitchMode(activeMode === 'dashboard' ? 'checkin' : 'dashboard')}
               className="text-indigo-600 hover:underline font-semibold cursor-pointer"
             >
-              切換至{activeMode === 'checkin' ? '承辦人後台 (需密碼)' : '學員簽到端'}
+              {activeMode === 'dashboard' ? '前往學員簽到端' : '承辦人後台 (需密碼)'}
             </button>
           </div>
         </div>
