@@ -33,7 +33,10 @@ import {
   Lock,
   Hourglass,
   Award,
-  Car
+  Car,
+  Edit3,
+  Save,
+  X
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -46,10 +49,11 @@ interface DashboardProps {
   onDeleteRosterParticipant: (id: string) => void;
   onManualCheckIn: (attendee: CombinedAttendeeView) => void;
   onManualCheckOut: (attendeeId: string) => void;
+  onUpdateEventInfo: (info: EventInfo) => void;
   onUpdateTravelTime?: (attendeeId: string, minutes: number) => void;
-  onRemoveCheckIn: (checkInId: string) => void;
+  onRemoveCheckIn: (attendeeId: string, checkInId?: string, attendeeName?: string) => void;
   onResetAllCheckIns: () => void;
-  onToggleHrVerify: (attendeeId: string) => void;
+  onToggleHrVerify: (attendeeId: string, type: 'checkin' | 'checkout') => void;
   onNavigateToCheckIn: () => void;
   onNavigateToCheckOut: () => void;
   onLogout?: () => void;
@@ -65,6 +69,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onDeleteRosterParticipant,
   onManualCheckIn,
   onManualCheckOut,
+  onUpdateEventInfo,
   onUpdateTravelTime,
   onRemoveCheckIn,
   onResetAllCheckIns,
@@ -73,7 +78,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onNavigateToCheckOut,
   onLogout
 }) => {
-  const [activeTab, setActiveTab] = useState<'all' | 'checked_in' | 'not_checked_in' | 'walk_in' | 'checked_out' | 'hr_verified' | 'roster_upload'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'checked_in' | 'not_checked_in' | 'walk_in' | 'checked_out' | 'checkin_verified' | 'checkout_verified' | 'roster_upload'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState<string>('all');
   const [selectedSignature, setSelectedSignature] = useState<{ name: string; url: string; time?: string; title?: string } | null>(null);
@@ -82,6 +87,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [showAddAttendeeModal, setShowAddAttendeeModal] = useState(false);
   const [newAttendee, setNewAttendee] = useState({ name: '', title: '', department: '', phone: '' });
 
+  // Organizer Edit Event Info & Unified Travel Time modal state
+  const [isEditingEvent, setIsEditingEvent] = useState(false);
+  const [eventFormData, setEventFormData] = useState<EventInfo>(eventInfo);
+
+  // Keep form data synced if eventInfo changes from cloud
+  React.useEffect(() => {
+    setEventFormData(eventInfo);
+  }, [eventInfo]);
+
   // Calculate statistics
   const totalRosterCount = roster.length;
   const checkedInList = attendees.filter(a => a.status === 'CHECKED_IN');
@@ -89,7 +103,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const walkInList = attendees.filter(a => a.status === 'WALK_IN');
   const totalCheckedIn = checkedInList.length + walkInList.length;
   const checkedOutList = attendees.filter(a => a.checkOutTime);
-  const hrVerifiedList = attendees.filter(a => a.hrVerified);
+  const checkInVerifiedList = attendees.filter(a => a.checkInHrVerified || a.hrVerified);
+  const checkOutVerifiedList = attendees.filter(a => a.checkOutHrVerified);
 
   const attendanceRate = totalRosterCount > 0 ? Math.round((checkedInList.length / totalRosterCount) * 100) : 0;
 
@@ -105,7 +120,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
     if (activeTab === 'not_checked_in' && attendee.status !== 'NOT_CHECKED_IN') return false;
     if (activeTab === 'walk_in' && attendee.status !== 'WALK_IN') return false;
     if (activeTab === 'checked_out' && !attendee.checkOutTime) return false;
-    if (activeTab === 'hr_verified' && !attendee.hrVerified) return false;
+    if (activeTab === 'checkin_verified' && !(attendee.checkInHrVerified || attendee.hrVerified)) return false;
+    if (activeTab === 'checkout_verified' && !attendee.checkOutHrVerified) return false;
 
     // Search query
     if (searchQuery.trim()) {
@@ -171,6 +187,19 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
         {/* Global Download & Export Action Group */}
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setEventFormData(eventInfo);
+              setIsEditingEvent(true);
+            }}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition-colors cursor-pointer shadow-2xs"
+            title="承辦人專屬：編輯活動名稱、日期、地點及統一路途時間"
+          >
+            <Edit3 className="w-4 h-4 text-indigo-600" />
+            <span>編輯活動資訊與路途時間</span>
+          </button>
+
           <button
             type="button"
             onClick={() => exportToExcel(attendees, eventInfo)}
@@ -412,17 +441,33 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
             <button
               type="button"
-              onClick={() => setActiveTab('hr_verified')}
+              onClick={() => setActiveTab('checkin_verified')}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-                activeTab === 'hr_verified'
-                  ? 'bg-indigo-600 text-white shadow-xs'
+                activeTab === 'checkin_verified'
+                  ? 'bg-blue-600 text-white shadow-xs'
                   : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
               }`}
             >
-              <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
-              <span>人事已覆核</span>
-              <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${activeTab === 'hr_verified' ? 'bg-indigo-700 text-white' : 'bg-indigo-50 text-indigo-700 font-bold'}`}>
-                {hrVerifiedList.length}
+              <CheckCircle className="w-3.5 h-3.5 text-blue-500" />
+              <span>簽到已覆核</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${activeTab === 'checkin_verified' ? 'bg-blue-700 text-white' : 'bg-blue-50 text-blue-700 font-bold'}`}>
+                {checkInVerifiedList.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('checkout_verified')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeTab === 'checkout_verified'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+              }`}
+            >
+              <CheckCircle className="w-3.5 h-3.5 text-amber-500" />
+              <span>簽退已覆核</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${activeTab === 'checkout_verified' ? 'bg-amber-700 text-white' : 'bg-amber-50 text-amber-700 font-bold'}`}>
+                {checkOutVerifiedList.length}
               </span>
             </button>
 
@@ -561,14 +606,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       <th className="py-3 px-3 text-center">路途時間</th>
                       <th className="py-3 px-3 text-center bg-indigo-50/50">核予補休時間</th>
                       <th className="py-3 px-3 text-center">手寫簽名</th>
-                      <th className="py-3 px-3 text-center">人事覆核</th>
+                      <th className="py-3 px-3 text-center">簽到覆核</th>
+                      <th className="py-3 px-3 text-center">簽退覆核</th>
                       <th className="py-3 px-3 text-center">承辦人操作</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {filteredAttendees.length === 0 ? (
                       <tr>
-                        <td colSpan={13} className="py-12 text-center text-slate-400">
+                        <td colSpan={14} className="py-12 text-center text-slate-400">
                           <Users className="w-8 h-8 mx-auto text-slate-300 mb-2" />
                           <p className="text-sm">查無符合條件之人員資料</p>
                           <p className="text-xs text-slate-400 mt-0.5">請確認搜尋關鍵字或篩選設定</p>
@@ -674,32 +720,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               )}
                             </td>
 
-                            {/* Travel Time (路途時間) */}
+                            {/* Travel Time (統一路途時間) */}
                             <td className="py-3 px-3 text-center">
                               {isChecked ? (
-                                <div className="inline-flex items-center gap-1 justify-center">
-                                  <span className="font-mono text-[11px] text-slate-700 font-medium">
-                                    {attendee.travelDisplay || '0分鐘'}
-                                  </span>
-                                  {onUpdateTravelTime && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        const input = prompt(`請輸入「${attendee.name}」之公務路途時間 (分鐘數)：`, String(attendee.travelMinutes ?? 60));
-                                        if (input !== null) {
-                                          const parsed = parseInt(input, 10);
-                                          if (!isNaN(parsed) && parsed >= 0) {
-                                            onUpdateTravelTime(attendee.id, parsed);
-                                          }
-                                        }
-                                      }}
-                                      className="text-[10px] text-blue-600 hover:text-blue-800 bg-blue-50 px-1 py-0.5 rounded hover:bg-blue-100 transition-colors cursor-pointer"
-                                      title="點擊修改此學員之路途時間"
-                                    >
-                                      設
-                                    </button>
-                                  )}
-                                </div>
+                                <span className="font-mono text-[11px] text-slate-700 font-medium">
+                                  {attendee.travelDisplay || `${eventInfo.defaultTravelMinutes ?? 60}分鐘`}
+                                </span>
                               ) : (
                                 <span className="text-slate-300">—</span>
                               )}
@@ -768,15 +794,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               </div>
                             </td>
 
-                            {/* HR Verification (人事覆核) */}
+                            {/* Check-In HR Verification (簽到覆核) */}
                             <td className="py-3 px-3 text-center">
                               {isChecked ? (
-                                attendee.hrVerified ? (
+                                attendee.checkInHrVerified || attendee.hrVerified ? (
                                   <button
                                     type="button"
-                                    onClick={() => onToggleHrVerify(attendee.id)}
-                                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-300 hover:bg-emerald-100 transition-colors cursor-pointer shadow-xs"
-                                    title="人事已覆核確認學員參加。點擊可切換/取消覆核"
+                                    onClick={() => onToggleHrVerify(attendee.id, 'checkin')}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-300 hover:bg-emerald-100 transition-colors cursor-pointer shadow-2xs"
+                                    title="簽到已覆核。點擊切換/取消覆核"
                                   >
                                     <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
                                     <span>已覆核</span>
@@ -784,9 +810,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                 ) : (
                                   <button
                                     type="button"
-                                    onClick={() => onToggleHrVerify(attendee.id)}
-                                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100 transition-colors cursor-pointer"
-                                    title="人事人員點擊此處完成覆核確認"
+                                    onClick={() => onToggleHrVerify(attendee.id, 'checkin')}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100 transition-colors cursor-pointer"
+                                    title="人事人員點擊完成簽到覆核"
                                   >
                                     <Clock className="w-3.5 h-3.5 text-amber-600" />
                                     <span>未覆核</span>
@@ -795,10 +821,41 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               ) : (
                                 <button
                                   type="button"
-                                  onClick={() => onToggleHrVerify(attendee.id)}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-slate-400 bg-slate-50 hover:bg-blue-50 hover:text-blue-600 border border-slate-200 transition-colors cursor-pointer"
-                                  title="學員尚未報到。若人事確認其在場，點擊可直接代辦報到並完成人事覆核"
+                                  onClick={() => onToggleHrVerify(attendee.id, 'checkin')}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] text-slate-400 bg-slate-50 hover:bg-blue-50 hover:text-blue-600 border border-slate-200 transition-colors cursor-pointer"
+                                  title="學員尚未報到。點擊可直接代辦報到並完成簽到覆核"
                                 >
+                                  <span>未報到</span>
+                                </button>
+                              )}
+                            </td>
+
+                            {/* Check-Out HR Verification (簽退覆核) */}
+                            <td className="py-3 px-3 text-center">
+                              {!isChecked ? (
+                                <span className="text-slate-300">—</span>
+                              ) : !attendee.checkOutTime ? (
+                                <span className="text-slate-400 text-[11px] italic bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">
+                                  待簽退
+                                </span>
+                              ) : attendee.checkOutHrVerified ? (
+                                <button
+                                  type="button"
+                                  onClick={() => onToggleHrVerify(attendee.id, 'checkout')}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-300 hover:bg-emerald-100 transition-colors cursor-pointer shadow-2xs"
+                                  title="簽退已覆核。點擊切換/取消覆核"
+                                >
+                                  <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                                  <span>已覆核</span>
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => onToggleHrVerify(attendee.id, 'checkout')}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100 transition-colors cursor-pointer"
+                                  title="人事人員點擊完成簽退覆核"
+                                >
+                                  <Clock className="w-3.5 h-3.5 text-amber-600" />
                                   <span>未覆核</span>
                                 </button>
                               )}
@@ -826,13 +883,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                     type="button"
                                     onClick={() => {
                                       if (confirm(`確定要取消 ${attendee.name} 的報到紀錄嗎？`)) {
-                                        // find the check-in record id
-                                        const found = checkIns.find(c => c.participantId === attendee.id || c.id === attendee.id);
-                                        if (found) onRemoveCheckIn(found.id);
+                                        const found = checkIns.find(
+                                          c => c.id === attendee.checkInId ||
+                                               c.id === attendee.id ||
+                                               c.participantId === attendee.id ||
+                                               (attendee.name && c.name.trim().toLowerCase() === attendee.name.trim().toLowerCase())
+                                        );
+                                        onRemoveCheckIn(attendee.id, found?.id, attendee.name);
                                       }
                                     }}
                                     className="text-[11px] text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 transition-colors cursor-pointer"
-                                    title="取消報到狀態"
+                                    title="取消報到狀態並跨裝置同步"
                                   >
                                     取消報到
                                   </button>
@@ -1004,6 +1065,198 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   className="px-4 py-1.5 rounded-lg text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-xs"
                 >
                   新增至名冊
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Organizer Edit Event Info & Unified Travel Time Modal */}
+      {isEditingEvent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-xl w-full max-h-[90vh] overflow-y-auto p-6 sm:p-7">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
+                  <Edit3 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    承辦人設定：編輯活動資訊與統一路途時間
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    僅後台承辦人具權限修改，設定後將即時同步至簽到端與簽退端
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsEditingEvent(false)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={e => {
+                e.preventDefault();
+                onUpdateEventInfo({
+                  ...eventFormData,
+                  defaultTravelMinutes: Number(eventFormData.defaultTravelMinutes) >= 0 ? Number(eventFormData.defaultTravelMinutes) : 60
+                });
+                setIsEditingEvent(false);
+              }}
+              className="space-y-4"
+            >
+              {/* Event Title */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  活動名稱 / 研習主題 <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={eventFormData.title}
+                  onChange={e => setEventFormData({ ...eventFormData, title: e.target.value })}
+                  placeholder="例：苗栗縣三義鄉公所培訓或活動簽到系統"
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-indigo-500 font-medium"
+                />
+              </div>
+
+              {/* Date and Time */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">活動日期</label>
+                  <input
+                    type="text"
+                    value={eventFormData.date}
+                    onChange={e => setEventFormData({ ...eventFormData, date: e.target.value })}
+                    placeholder="例：2026年3月18日 (三)"
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">活動時間</label>
+                  <input
+                    type="text"
+                    value={eventFormData.time}
+                    onChange={e => setEventFormData({ ...eventFormData, time: e.target.value })}
+                    placeholder="例：09:00 - 16:30"
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
+              {/* Location and Organizer */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">活動地點</label>
+                  <input
+                    type="text"
+                    value={eventFormData.location}
+                    onChange={e => setEventFormData({ ...eventFormData, location: e.target.value })}
+                    placeholder="例：公所三樓大禮堂"
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">主辦 / 承辦單位</label>
+                  <input
+                    type="text"
+                    value={eventFormData.organizer}
+                    onChange={e => setEventFormData({ ...eventFormData, organizer: e.target.value })}
+                    placeholder="例：苗栗縣三義鄉公所"
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">活動備註 / 注意事項</label>
+                <input
+                  type="text"
+                  value={eventFormData.notes}
+                  onChange={e => setEventFormData({ ...eventFormData, notes: e.target.value })}
+                  placeholder="例：響應環保，請學員自備環保水杯與文具"
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              {/* Unified Travel Time Setting (統一路途時間) */}
+              <div className="bg-gradient-to-br from-indigo-50/70 to-blue-50/60 p-4 rounded-2xl border border-indigo-200/80 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                      <Clock className="w-4 h-4 text-indigo-600" />
+                      <span>全體學員統一路途時間 (分鐘)</span>
+                      <span className="text-[10px] bg-indigo-200 text-indigo-900 px-1.5 py-0.2 rounded font-semibold">
+                        承辦人統一設定
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-slate-600 mt-0.5">
+                      全體參加人員之「路途時間」均統一由此套用，簽退時系統將自動以【參加時間 ＋ 統一路途時間】核予補休時間，無需逐一對個別學員重複設定。
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="relative w-36">
+                    <input
+                      type="number"
+                      min={0}
+                      max={480}
+                      step={5}
+                      value={eventFormData.defaultTravelMinutes ?? 60}
+                      onChange={e => setEventFormData({ ...eventFormData, defaultTravelMinutes: Number(e.target.value) || 0 })}
+                      className="w-full px-3 py-2 rounded-xl border border-indigo-300 text-sm font-bold text-indigo-900 bg-white focus:ring-2 focus:ring-indigo-500 pr-12 text-center"
+                    />
+                    <span className="absolute right-3 top-2 text-xs font-semibold text-slate-500">分鐘</span>
+                  </div>
+
+                  {/* Preset quick buttons */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {[
+                      { label: '0分 (無路程)', val: 0 },
+                      { label: '30分鐘', val: 30 },
+                      { label: '60分 (1小時)', val: 60 },
+                      { label: '90分 (1.5小時)', val: 90 },
+                      { label: '120分 (2小時)', val: 120 }
+                    ].map(preset => (
+                      <button
+                        key={preset.val}
+                        type="button"
+                        onClick={() => setEventFormData({ ...eventFormData, defaultTravelMinutes: preset.val })}
+                        className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                          (eventFormData.defaultTravelMinutes ?? 60) === preset.val
+                            ? 'bg-indigo-600 text-white shadow-2xs'
+                            : 'bg-white text-slate-700 border border-slate-300 hover:bg-indigo-50 hover:border-indigo-300'
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="pt-3 flex justify-end gap-2 border-t border-slate-200 mt-4">
+                <button
+                  type="button"
+                  onClick={() => setIsEditingEvent(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>儲存設定並同步</span>
                 </button>
               </div>
             </form>

@@ -91,8 +91,8 @@ export default function App() {
       // 2. Apply addition, deletion, or modification
       const next = mutation(base);
 
-      // 3. Stamp with current millisecond timestamp
-      const now = Date.now();
+      // 3. Stamp with strictly increasing millisecond timestamp
+      const now = Math.max(Date.now(), (freshCloud?.updatedAt || 0) + 1, lastSyncedUpdatedAtRef.current + 1);
       lastSyncedUpdatedAtRef.current = now;
 
       // 4. Update local React state & LocalStorage immediately
@@ -141,9 +141,13 @@ export default function App() {
         const remote = await fetchFromCloudRelay(roomId);
         if (!remote || typeof remote.updatedAt !== 'number' || !isMounted) return;
 
-        // If cloud data is newer than this device's last synced time, accept and update immediately!
-        if (remote.updatedAt > lastSyncedUpdatedAtRef.current) {
-          lastSyncedUpdatedAtRef.current = remote.updatedAt;
+        // If cloud data is newer or from another device with different timestamp, accept immediately (fixes clock skew)
+        const isFromOtherDevice = Boolean(remote.lastModifiedBy && remote.lastModifiedBy !== myDeviceIdRef.current);
+        const isNewer = remote.updatedAt > lastSyncedUpdatedAtRef.current;
+        const isDifferentTimestampFromOther = isFromOtherDevice && remote.updatedAt !== lastSyncedUpdatedAtRef.current;
+
+        if (isNewer || isDifferentTimestampFromOther) {
+          lastSyncedUpdatedAtRef.current = Math.max(remote.updatedAt, lastSyncedUpdatedAtRef.current);
           setEventInfo(remote.eventInfo);
           setRoster(remote.roster);
           setCheckIns(remote.checkIns);
@@ -497,12 +501,21 @@ export default function App() {
     });
   };
 
-  // 7. Remove single check-in (synced based on latest write)
-  const handleRemoveCheckIn = (checkInId: string) => {
-    executeMutationAndBroadcast('取消報到紀錄', base => ({
-      ...base,
-      checkIns: base.checkIns.filter(c => c.id !== checkInId && c.participantId !== checkInId)
-    }));
+  // 7. Remove single check-in (synced based on latest write, matches checkInId, attendeeId, and name)
+  const handleRemoveCheckIn = (attendeeId: string, checkInId?: string, attendeeName?: string) => {
+    executeMutationAndBroadcast(`取消報到: ${attendeeName || attendeeId}`, base => {
+      const cleanName = attendeeName ? attendeeName.trim().toLowerCase() : '';
+      return {
+        ...base,
+        checkIns: base.checkIns.filter(c => {
+          if (checkInId && c.id === checkInId) return false;
+          if (c.id === attendeeId) return false;
+          if (c.participantId === attendeeId) return false;
+          if (cleanName && c.name.trim().toLowerCase() === cleanName) return false;
+          return true;
+        })
+      };
+    });
   };
 
   // 8. Reset all check-in records (synced based on latest write)
@@ -513,18 +526,17 @@ export default function App() {
     }));
   };
 
-  // 9. Handle toggling HR verification state (synced across all devices in real-time)
-  const handleToggleHrVerify = (attendeeId: string) => {
+  // 9. Handle toggling verification state (獨立拆分為簽到覆核與簽退覆核，即時雙向同步)
+  const handleToggleHrVerify = (attendeeId: string, type: 'checkin' | 'checkout' = 'checkin') => {
     const targetAttendee = combinedAttendees.find(a => a.id === attendeeId);
     const targetName = targetAttendee ? targetAttendee.name : '學員';
 
-    executeMutationAndBroadcast(`人事覆核狀態變更: ${targetName}`, base => {
+    executeMutationAndBroadcast(`${type === 'checkin' ? '簽到' : '簽退'}覆核變更: ${targetName}`, base => {
       const isAlreadyCheckedIn = targetAttendee && (targetAttendee.status === 'CHECKED_IN' || targetAttendee.status === 'WALK_IN');
 
       let nextCheckIns: CheckInRecord[];
 
       if (isAlreadyCheckedIn) {
-        // Toggle hrVerified on existing checkIn record
         nextCheckIns = base.checkIns.map(c => {
           const isMatch =
             c.id === attendeeId ||
@@ -532,17 +544,28 @@ export default function App() {
             (targetAttendee && c.name.trim().toLowerCase() === targetAttendee.name.trim().toLowerCase());
 
           if (isMatch) {
-            const nextVerified = !c.hrVerified;
-            return {
-              ...c,
-              hrVerified: nextVerified,
-              hrVerifiedAt: nextVerified ? new Date().toISOString() : undefined
-            };
+            const nowIso = new Date().toISOString();
+            if (type === 'checkout') {
+              const nextVerified = !c.checkOutHrVerified;
+              return {
+                ...c,
+                checkOutHrVerified: nextVerified,
+                checkOutHrVerifiedAt: nextVerified ? nowIso : undefined
+              };
+            } else {
+              const nextVerified = !(c.checkInHrVerified ?? c.hrVerified);
+              return {
+                ...c,
+                checkInHrVerified: nextVerified,
+                hrVerified: nextVerified,
+                checkInHrVerifiedAt: nextVerified ? nowIso : undefined
+              };
+            }
           }
           return c;
         });
-      } else if (targetAttendee) {
-        // Attendee has not checked in yet, but HR clicks verify -> direct HR verification check-in
+      } else if (targetAttendee && type === 'checkin') {
+        // Attendee has not checked in yet, but HR clicks verify -> direct check-in with verification stamp
         const now = new Date();
         const canvas = document.createElement('canvas');
         canvas.width = 240;
@@ -557,7 +580,7 @@ export default function App() {
           ctx.fillStyle = '#4f46e5';
           ctx.font = 'bold 15px sans-serif';
           ctx.textAlign = 'center';
-          ctx.fillText('人事單位現場核驗覆核', 120, 36);
+          ctx.fillText('人事單位現場簽到覆核', 120, 36);
           ctx.font = '11px sans-serif';
           ctx.fillText(now.toLocaleTimeString('zh-TW', { hour12: false }), 120, 56);
         }
@@ -572,9 +595,10 @@ export default function App() {
           checkInTime: now.toISOString(),
           signatureDataUrl: stampDataUrl,
           isWalkIn: false,
+          checkInHrVerified: true,
           hrVerified: true,
-          hrVerifiedAt: now.toISOString(),
-          notes: '人事單位現場直接核驗覆核'
+          checkInHrVerifiedAt: now.toISOString(),
+          notes: '人事單位現場直接簽到覆核'
         };
 
         nextCheckIns = [newRecord, ...base.checkIns];
@@ -589,8 +613,8 @@ export default function App() {
     });
   };
 
-  // Combined real-time attendee comparison list
-  const combinedAttendees = buildCombinedAttendeeList(roster, checkIns);
+  // Combined real-time attendee comparison list (傳入統一路途時間)
+  const combinedAttendees = buildCombinedAttendeeList(roster, checkIns, eventInfo.defaultTravelMinutes ?? 60);
 
   const checkedInCount = combinedAttendees.filter(
     a => a.status === 'CHECKED_IN' || a.status === 'WALK_IN'
@@ -638,6 +662,7 @@ export default function App() {
             roster={roster}
             checkIns={checkIns}
             attendees={combinedAttendees}
+            onUpdateEventInfo={handleUpdateEventInfo}
             onImportRoster={handleImportRoster}
             onAddRosterParticipant={handleAddRosterParticipant}
             onDeleteRosterParticipant={handleDeleteRosterParticipant}

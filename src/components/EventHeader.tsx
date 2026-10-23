@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { EventInfo } from '../types';
-import { Calendar, MapPin, Edit3, UserCheck, LayoutDashboard, Clock, Save, X, Sparkles, Lock, Unlock, LogOut, RefreshCw, Wifi } from 'lucide-react';
+import { Calendar, MapPin, UserCheck, LayoutDashboard, Clock, Sparkles, Lock, Unlock, LogOut, RefreshCw, Wifi } from 'lucide-react';
 
 interface EventHeaderProps {
   eventInfo: EventInfo;
@@ -27,22 +27,7 @@ export const EventHeader: React.FC<EventHeaderProps> = ({
   myDeviceId,
   lastSyncInfo
 }) => {
-  const [isEditing, setIsEditing] = useState(false);
-  const [formData, setFormData] = useState<EventInfo>(eventInfo);
-
   const percentage = totalExpectedCount > 0 ? Math.round((checkedInCount / totalExpectedCount) * 100) : 0;
-
-  const handleOpenEdit = () => {
-    setFormData(eventInfo);
-    setIsEditing(true);
-  };
-
-  const handleSave = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.title.trim()) return;
-    onUpdateEventInfo(formData);
-    setIsEditing(false);
-  };
 
   return (
     <>
@@ -70,15 +55,6 @@ export const EventHeader: React.FC<EventHeaderProps> = ({
                     <span>最新更新：{lastSyncInfo.time} 來自 {lastSyncInfo.device}（{lastSyncInfo.action}）</span>
                   </span>
                 )}
-                <button
-                  type="button"
-                  onClick={handleOpenEdit}
-                  className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-blue-600 bg-slate-100 hover:bg-blue-50 px-2 py-0.5 rounded border border-slate-200 hover:border-blue-300 transition-colors cursor-pointer"
-                  title="修改活動或訓練名稱與詳細資訊"
-                >
-                  <Edit3 className="w-3 h-3" />
-                  <span>編輯活動資訊</span>
-                </button>
               </div>
 
               <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight mt-1 truncate">
@@ -187,125 +163,6 @@ export const EventHeader: React.FC<EventHeaderProps> = ({
           </div>
         </div>
       </header>
-
-      {/* Edit Event Info Modal */}
-      {isEditing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-lg w-full overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
-              <div className="flex items-center gap-2 font-bold text-slate-800">
-                <Edit3 className="w-4 h-4 text-blue-600" />
-                <span>人工修正訓練及活動資訊</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsEditing(false)}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-md"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSave} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  訓練或活動名稱 <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={formData.title}
-                  onChange={e => setFormData({ ...formData, title: e.target.value })}
-                  placeholder="例如：2026年度關鍵人才核心職能培訓營"
-                  className="w-full px-3.5 py-2 rounded-lg border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-sm font-medium text-slate-900"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    活動日期
-                  </label>
-                  <input
-                    type="date"
-                    value={formData.date}
-                    onChange={e => setFormData({ ...formData, date: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    活動時間
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.time}
-                    onChange={e => setFormData({ ...formData, time: e.target.value })}
-                    placeholder="09:00 - 17:00"
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-sm"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  活動地點 / 教室
-                </label>
-                <input
-                  type="text"
-                  value={formData.location}
-                  onChange={e => setFormData({ ...formData, location: e.target.value })}
-                  placeholder="例如：總部大樓 3F 國際會議廳"
-                  className="w-full px-3.5 py-2 rounded-lg border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-sm"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  承辦單位 / 講師
-                </label>
-                <input
-                  type="text"
-                  value={formData.organizer}
-                  onChange={e => setFormData({ ...formData, organizer: e.target.value })}
-                  placeholder="例如：人力資源處培訓科"
-                  className="w-full px-3.5 py-2 rounded-lg border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-sm"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  活動注意事項 / 簽到須知
-                </label>
-                <textarea
-                  rows={2}
-                  value={formData.notes}
-                  onChange={e => setFormData({ ...formData, notes: e.target.value })}
-                  placeholder="學員簽到時可看到的補充提示..."
-                  className="w-full px-3.5 py-2 rounded-lg border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-sm resize-none"
-                />
-              </div>
-
-              <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(false)}
-                  className="px-4 py-2 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors"
-                >
-                  <Save className="w-4 h-4" />
-                  <span>儲存修正</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </>
   );
 };

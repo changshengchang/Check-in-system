@@ -119,7 +119,8 @@ export function exportToExcel(attendees: CombinedAttendeeView[], eventInfo: Even
     '核予補休總分鐘數': item.compTimeMinutes ?? '—',
     '手寫簽到狀態': item.signatureDataUrl ? '已簽名' : '未簽名',
     '手寫簽退狀態': item.checkOutSignatureDataUrl ? '已簽退' : '未簽退',
-    '人事覆核': item.hrVerified ? '已覆核' : '未覆核',
+    '簽到覆核': item.checkInHrVerified || item.hrVerified ? '已覆核' : '未覆核',
+    '簽退覆核': item.checkOutHrVerified ? '已覆核' : (item.checkOutTime ? '未覆核' : '—'),
     '備註/類別': item.isWalkIn ? '現場追加' : '名冊預先報名'
   }));
 
@@ -141,7 +142,8 @@ export function exportToExcel(attendees: CombinedAttendeeView[], eventInfo: Even
     { wch: 18 }, // 核予補休分鐘數
     { wch: 15 }, // 簽到簽名
     { wch: 15 }, // 簽退簽名
-    { wch: 14 }, // 人事覆核
+    { wch: 14 }, // 簽到覆核
+    { wch: 14 }, // 簽退覆核
     { wch: 16 }  // 備註
   ];
 
@@ -178,7 +180,8 @@ export function exportToCsv(attendees: CombinedAttendeeView[], eventInfo: EventI
     '核予補休總分鐘數',
     '手寫簽到狀態',
     '手寫簽退狀態',
-    '人事覆核',
+    '簽到覆核',
+    '簽退覆核',
     '名單類別'
   ];
   const rows = attendees.map((item, idx) => [
@@ -196,7 +199,8 @@ export function exportToCsv(attendees: CombinedAttendeeView[], eventInfo: EventI
     `"${item.compTimeMinutes ?? '—'}"`,
     `"${item.signatureDataUrl ? '已簽名' : '未簽名'}"`,
     `"${item.checkOutSignatureDataUrl ? '已簽退' : '未簽退'}"`,
-    `"${item.hrVerified ? '已覆核' : '未覆核'}"`,
+    `"${item.checkInHrVerified || item.hrVerified ? '已覆核' : '未覆核'}"`,
+    `"${item.checkOutHrVerified ? '已覆核' : (item.checkOutTime ? '未覆核' : '—')}"`,
     `"${item.isWalkIn ? '現場追加' : '名冊預先報名'}"`
   ]);
 

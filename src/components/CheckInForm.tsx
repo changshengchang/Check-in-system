@@ -463,7 +463,7 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
               報到手續完成！
             </h3>
             <p className="text-sm font-bold text-red-600 mt-1.5 tracking-wide">
-              歡迎參加本次訓練與活動,請記得向人事單位告知【覆核】
+              歡迎參加本次訓練與活動,請記得向人事單位告知【簽到覆核】
             </p>
 
             {/* Check-in Details Card */}
@@ -482,6 +482,16 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
                 <span className="text-slate-500">報到時間</span>
                 <span className="font-mono text-slate-700">
                   {new Date(recentCheckedIn.checkInTime).toLocaleTimeString('zh-TW', { hour12: false })}
+                </span>
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-slate-200">
+                <span className="text-slate-500">簽到覆核狀態</span>
+                <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                  recentCheckedIn.checkInHrVerified || recentCheckedIn.hrVerified
+                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                    : 'bg-amber-100 text-amber-800 border border-amber-300'
+                }`}>
+                  {recentCheckedIn.checkInHrVerified || recentCheckedIn.hrVerified ? '✓ 簽到已覆核' : '⏳ 簽到未覆核 (請洽人事)'}
                 </span>
               </div>
               <div className="flex justify-between items-center py-1 border-b border-slate-200">

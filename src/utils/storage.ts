@@ -11,7 +11,8 @@ export const DEFAULT_EVENT_INFO: EventInfo = {
   time: '09:00 - 16:30',
   location: '苗栗縣三義鄉公所 3F 大禮堂會議室',
   organizer: '苗栗縣三義鄉公所 (人事室 / 社會民政課)',
-  notes: '請於入場時完成手寫簽到，培訓活動結束前請至「學員簽退端」完成手寫簽退以核算參加時數'
+  notes: '請於入場時完成手寫簽到，培訓活動結束前請至「學員簽退端」完成手寫簽退以核算參加時數',
+  defaultTravelMinutes: 60
 };
 
 /**
@@ -94,6 +95,9 @@ export function loadEventInfo(): EventInfo {
           parsed.notes = DEFAULT_EVENT_INFO.notes;
           saveEventInfo(parsed);
         }
+        if (typeof parsed.defaultTravelMinutes !== 'number') {
+          parsed.defaultTravelMinutes = 60;
+        }
         return parsed;
       }
     }
@@ -163,7 +167,8 @@ export function saveCheckIns(checkIns: CheckInRecord[]) {
  */
 export function buildCombinedAttendeeList(
   roster: RegisteredParticipant[],
-  checkIns: CheckInRecord[]
+  checkIns: CheckInRecord[],
+  unifiedTravelMinutes: number = 60
 ): CombinedAttendeeView[] {
   const list: CombinedAttendeeView[] = [];
 
@@ -205,10 +210,15 @@ export function buildCombinedAttendeeList(
       );
       const durationMins = calcDuration?.minutes || matchedCheckIn.durationMinutes;
       const durationDisp = calcDuration?.display || matchedCheckIn.durationDisplay;
-      const travelMins = matchedCheckIn.travelMinutes ?? p.travelMinutes ?? 0;
+      
+      // 統一由承辦人設定之路途時間 (全體學員均相同)
+      const travelMins = unifiedTravelMinutes;
       const comp = durationMins !== undefined
         ? calculateCompTime(durationMins, travelMins)
         : undefined;
+
+      const isCheckInVerified = Boolean(matchedCheckIn.checkInHrVerified ?? matchedCheckIn.hrVerified);
+      const isCheckOutVerified = Boolean(matchedCheckIn.checkOutHrVerified);
 
       list.push({
         id: p.id,
@@ -221,8 +231,12 @@ export function buildCombinedAttendeeList(
         signatureDataUrl: matchedCheckIn.signatureDataUrl,
         isWalkIn: false,
         notes: matchedCheckIn.notes,
-        hrVerified: Boolean(matchedCheckIn.hrVerified),
-        hrVerifiedAt: matchedCheckIn.hrVerifiedAt,
+        hrVerified: isCheckInVerified,
+        hrVerifiedAt: matchedCheckIn.checkInHrVerifiedAt ?? matchedCheckIn.hrVerifiedAt,
+        checkInHrVerified: isCheckInVerified,
+        checkInHrVerifiedAt: matchedCheckIn.checkInHrVerifiedAt ?? matchedCheckIn.hrVerifiedAt,
+        checkOutHrVerified: isCheckOutVerified,
+        checkOutHrVerifiedAt: matchedCheckIn.checkOutHrVerifiedAt,
         checkOutTime: matchedCheckIn.checkOutTime,
         checkOutSignatureDataUrl: matchedCheckIn.checkOutSignatureDataUrl,
         durationMinutes: durationMins,
@@ -233,7 +247,7 @@ export function buildCombinedAttendeeList(
         compTimeDisplay: comp?.compDisplay
       });
     } else {
-      const travelMins = p.travelMinutes ?? 0;
+      const travelMins = unifiedTravelMinutes;
       list.push({
         id: p.id,
         name: p.name,
@@ -242,6 +256,8 @@ export function buildCombinedAttendeeList(
         status: 'NOT_CHECKED_IN',
         isWalkIn: false,
         hrVerified: false,
+        checkInHrVerified: false,
+        checkOutHrVerified: false,
         travelMinutes: travelMins,
         travelDisplay: travelMins > 0 ? formatMinutesDisplay(travelMins) : '0分鐘'
       });
@@ -257,10 +273,13 @@ export function buildCombinedAttendeeList(
       );
       const durationMins = calcDuration?.minutes || c.durationMinutes;
       const durationDisp = calcDuration?.display || c.durationDisplay;
-      const travelMins = c.travelMinutes ?? 0;
+      const travelMins = unifiedTravelMinutes;
       const comp = durationMins !== undefined
         ? calculateCompTime(durationMins, travelMins)
         : undefined;
+
+      const isCheckInVerified = Boolean(c.checkInHrVerified ?? c.hrVerified);
+      const isCheckOutVerified = Boolean(c.checkOutHrVerified);
 
       list.push({
         id: c.id,
@@ -273,8 +292,12 @@ export function buildCombinedAttendeeList(
         signatureDataUrl: c.signatureDataUrl,
         isWalkIn: true,
         notes: c.notes,
-        hrVerified: Boolean(c.hrVerified),
-        hrVerifiedAt: c.hrVerifiedAt,
+        hrVerified: isCheckInVerified,
+        hrVerifiedAt: c.checkInHrVerifiedAt ?? c.hrVerifiedAt,
+        checkInHrVerified: isCheckInVerified,
+        checkInHrVerifiedAt: c.checkInHrVerifiedAt ?? c.hrVerifiedAt,
+        checkOutHrVerified: isCheckOutVerified,
+        checkOutHrVerifiedAt: c.checkOutHrVerifiedAt,
         checkOutTime: c.checkOutTime,
         checkOutSignatureDataUrl: c.checkOutSignatureDataUrl,
         durationMinutes: durationMins,

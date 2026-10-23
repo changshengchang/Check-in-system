@@ -177,7 +177,8 @@ export const PrintableView: React.FC<PrintableViewProps> = ({
                 {showSignatures && (
                   <th className="py-2.5 px-3 text-center">簽到/簽退手寫簽名</th>
                 )}
-                <th className="py-2.5 px-2 w-20 text-center">人事覆核</th>
+                <th className="py-2.5 px-2 w-20 text-center">簽到覆核</th>
+                <th className="py-2.5 px-2 w-20 text-center">簽退覆核</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
@@ -269,10 +270,23 @@ export const PrintableView: React.FC<PrintableViewProps> = ({
                       </td>
                     )}
                     <td className="py-2 px-2 text-center">
-                      {a.hrVerified ? (
+                      {a.checkInHrVerified || a.hrVerified ? (
                         <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-300">
                           已覆核
                         </span>
+                      ) : (
+                        <span className="inline-block px-1.5 py-0.5 rounded text-[10px] text-slate-400 bg-slate-50 border border-slate-200">
+                          未覆核
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 px-2 text-center">
+                      {a.checkOutHrVerified ? (
+                        <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-300">
+                          已覆核
+                        </span>
+                      ) : !a.checkOutTime ? (
+                        <span className="text-slate-300">—</span>
                       ) : (
                         <span className="inline-block px-1.5 py-0.5 rounded text-[10px] text-slate-400 bg-slate-50 border border-slate-200">
                           未覆核

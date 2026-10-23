@@ -42,7 +42,7 @@ interface CheckOutFormProps {
     compTimeMinutes?: number,
     compTimeDisplay?: string
   ) => void;
-  onToggleHrVerify?: (attendeeId: string) => void;
+  onToggleHrVerify?: (attendeeId: string, type?: 'checkin' | 'checkout') => void;
   onNavigateToDashboard: () => void;
   onNavigateToCheckIn: () => void;
 }
@@ -62,8 +62,8 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
 
-  // Travel time (路途時間，單位分鐘，公所預設 60 分鐘，可微調)
-  const [travelMinutes, setTravelMinutes] = useState<number>(60);
+  // 統一路途時間 (由承辦人在後台統一設定，全體學員均相同，預設 60 分鐘)
+  const unifiedTravelMinutes = eventInfo.defaultTravelMinutes ?? 60;
 
   // Duplicate Check-Out modal
   const [showDuplicateModal, setShowDuplicateModal] = useState<{
@@ -83,7 +83,7 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
     travelDisplay: string;
     compTimeDisplay: string;
     signatureDataUrl: string;
-    hrVerified?: boolean;
+    checkOutHrVerified?: boolean;
   } | null>(null);
 
   const signaturePadRef = useRef<SignaturePadHandle | null>(null);
@@ -115,9 +115,6 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
     setName(a.name);
     setSelectedAttendee(a);
     setErrorMessage('');
-    if (a.travelMinutes !== undefined) {
-      setTravelMinutes(a.travelMinutes);
-    }
 
     if (a.checkOutTime) {
       setErrorMessage(`【重複簽退警示】「${a.name}」已於 ${new Date(a.checkOutTime).toLocaleTimeString('zh-TW', { hour12: false })} 完成過簽退，送出時系統將拒絕重複簽退！`);
@@ -131,9 +128,6 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
     const exact = checkedInAttendees.find(p => p.name.trim() === val.trim());
     if (exact) {
       setSelectedAttendee(exact);
-      if (exact.travelMinutes !== undefined) {
-        setTravelMinutes(exact.travelMinutes);
-      }
       if (exact.checkOutTime) {
         setErrorMessage(`【重複簽退警示】「${exact.name}」已於先前完成過簽退。`);
       }
@@ -149,9 +143,9 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
     ? calculateParticipationDuration(selectedAttendee.checkInTime, currentTime.toISOString())
     : null;
 
-  // Live Comp Time: "參加時間(計算)" 加上 "路途時間"
+  // Live Comp Time: "參加時間(計算)" 加上 統一路途時間
   const liveCompCalculation = liveDuration
-    ? calculateCompTime(liveDuration.minutes, travelMinutes)
+    ? calculateCompTime(liveDuration.minutes, unifiedTravelMinutes)
     : null;
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -207,9 +201,9 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
     const durationMinutes = duration?.minutes || 1;
     const durationDisplay = duration?.display || '1分鐘';
 
-    // Requirement 3: 核予補休時間 ＝ 參加時間(計算) 加上 路途時間
-    const compResult = calculateCompTime(durationMinutes, travelMinutes);
-    const travelDisplay = travelMinutes > 0 ? formatMinutesDisplay(travelMinutes) : '0分鐘';
+    // 核予補休時間 ＝ 參加時間(計算) 加上 統一路途時間
+    const compResult = calculateCompTime(durationMinutes, unifiedTravelMinutes);
+    const travelDisplay = unifiedTravelMinutes > 0 ? formatMinutesDisplay(unifiedTravelMinutes) : '0分鐘';
 
     // Target check-in record id
     const targetCheckInId = selectedAttendee.checkInId || selectedAttendee.id;
@@ -231,7 +225,7 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
       signatureDataUrl,
       durationMinutes,
       durationDisplay,
-      travelMinutes,
+      unifiedTravelMinutes,
       travelDisplay,
       compResult.compMinutes,
       compResult.compDisplay
@@ -247,7 +241,7 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
       travelDisplay,
       compTimeDisplay: compResult.compDisplay,
       signatureDataUrl,
-      hrVerified: selectedAttendee.hrVerified
+      checkOutHrVerified: selectedAttendee.checkOutHrVerified
     });
 
     setIsSubmitting(false);
@@ -463,28 +457,28 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
                   )}
                 </div>
 
-                {/* HR Verification Status (人事覆核功能) */}
+                {/* Check-Out HR Verification Status (簽退覆核功能) */}
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500 font-medium">人事覆核狀態：</span>
-                  {selectedAttendee.hrVerified ? (
+                  <span className="text-xs text-slate-500 font-medium">簽退覆核狀態：</span>
+                  {selectedAttendee.checkOutHrVerified ? (
                     <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>已覆核確認</span>
+                      <span>簽退已覆核確認</span>
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300">
                       <Clock className="w-3.5 h-3.5 text-amber-600" />
-                      <span>未覆核 (簽退後請告知人事單位)</span>
+                      <span>簽退未覆核 (簽退後請告知人事單位)</span>
                     </span>
                   )}
                   {onToggleHrVerify && (
                     <button
                       type="button"
-                      onClick={() => onToggleHrVerify(selectedAttendee.id)}
+                      onClick={() => onToggleHrVerify(selectedAttendee.id, 'checkout')}
                       className="text-[11px] font-semibold text-indigo-700 bg-white hover:bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200 transition-colors"
-                      title="若現場人事在旁，可點擊直接切換覆核狀態"
+                      title="若現場人事在旁，可點擊直接切換簽退覆核狀態"
                     >
-                      {selectedAttendee.hrVerified ? '取消覆核' : '人事現場覆核'}
+                      {selectedAttendee.checkOutHrVerified ? '取消簽退覆核' : '人事現場簽退覆核'}
                     </button>
                   )}
                 </div>
@@ -548,61 +542,34 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
                     {liveCompCalculation ? liveCompCalculation.compDisplay : '計算中...'}
                   </div>
                   <div className="text-[10px] text-amber-100 mt-0.5 font-medium">
-                    參加時間 ＋ 路途時間 ({travelMinutes}分)
+                    參加時間 ＋ 統一路途 ({unifiedTravelMinutes}分)
                   </div>
                 </div>
               </div>
 
-              {/* Requirement 3: Travel Time Setting Section */}
-              <div className="bg-white/90 p-3.5 rounded-xl border border-amber-200">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <Car className="w-4 h-4 text-amber-700" />
-                    <span className="text-xs font-bold text-amber-950">
-                      公務路途時間 (單位：分鐘)：
-                    </span>
-                    <span className="text-xs text-slate-500">
-                      依公所派訓規定往返路程核給，將主動加計於「核予補休時間」
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {[0, 30, 60, 90, 120].map(mins => (
-                      <button
-                        type="button"
-                        key={mins}
-                        onClick={() => setTravelMinutes(mins)}
-                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                          travelMinutes === mins
-                            ? 'bg-amber-600 text-white shadow-2xs'
-                            : 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200'
-                        }`}
-                      >
-                        {mins === 0 ? '無路途 (0分)' : `${mins}分鐘`}
-                      </button>
-                    ))}
-                    <div className="flex items-center gap-1 ml-1">
-                      <input
-                        type="number"
-                        min="0"
-                        max="600"
-                        step="10"
-                        value={travelMinutes}
-                        onChange={e => setTravelMinutes(Math.max(0, parseInt(e.target.value) || 0))}
-                        className="w-16 px-2 py-1 text-xs font-bold rounded-lg border border-slate-300 text-center"
-                      />
-                      <span className="text-xs text-slate-500">分</span>
-                    </div>
-                  </div>
+              {/* Requirement 1: Unified Travel Time Display (全體學員統一設定，無須個別設定) */}
+              <div className="bg-white/95 p-3.5 rounded-xl border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2">
+                  <Car className="w-4 h-4 text-amber-700 shrink-0" />
+                  <span className="font-bold text-amber-950">
+                    公所統一路途時間：
+                  </span>
+                  <span className="font-extrabold text-amber-900 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
+                    {unifiedTravelMinutes} 分鐘
+                  </span>
+                </div>
+                <div className="text-slate-500 text-[11px]">
+                  (由承辦人於管理後台統一設定，全體學員均相同，系統自動加計核予補休)
                 </div>
               </div>
 
-              {/* HR Verification Alert Banner */}
+              {/* Check-Out HR Verification Alert Banner */}
               <div className="bg-amber-100/70 rounded-xl p-3 border border-amber-300/80 flex items-start gap-2 text-xs text-amber-950">
                 <FileCheck2 className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-bold">【人事覆核規定事項】</span>
+                  <span className="font-bold">【簽退覆核規定事項】</span>
                   <span>
-                    簽退手續完成後，請記得向現場人事單位告知【覆核】，以確保參加時間與核予補休總時數（{liveCompCalculation?.compDisplay}）經人事核章後正式生效。
+                    簽退手續完成後，請記得向現場人事單位告知【簽退覆核】，以確保參加時間與核予補休總時數（{liveCompCalculation?.compDisplay}）經人事核驗後正式生效。
                   </span>
                 </div>
               </div>
@@ -653,7 +620,7 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
             </h3>
             {/* Requirement 1: Red notice matching check-in */}
             <p className="text-sm font-bold text-red-600 mt-1.5 tracking-wide">
-              恭喜完成本次活動簽退！請記得向人事單位告知【覆核】
+              恭喜完成本次活動簽退！請記得向人事單位告知【簽退覆核】
             </p>
 
             {/* Check-out Details Card */}
@@ -705,11 +672,11 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
               </div>
 
               <div className="flex justify-between items-center py-1 border-b border-amber-200/80">
-                <span className="text-slate-500">人事覆核</span>
+                <span className="text-slate-500">簽退覆核狀態</span>
                 <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-                  recentCheckedOut.hrVerified ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-amber-100 text-amber-800 border border-amber-300'
+                  recentCheckedOut.checkOutHrVerified ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-amber-100 text-amber-800 border border-amber-300'
                 }`}>
-                  {recentCheckedOut.hrVerified ? '已覆核' : '未覆核 (請記得向人事單位出示告知)'}
+                  {recentCheckedOut.checkOutHrVerified ? '✓ 簽退已覆核' : '⏳ 簽退未覆核 (請向人事單位出示告知)'}
                 </span>
               </div>
 
