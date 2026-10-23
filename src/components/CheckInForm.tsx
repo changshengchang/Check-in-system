@@ -191,10 +191,10 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
     }
   };
 
-  // Quick list of attendees waiting to check in (max 6 for easy tap)
+  // Complete list of attendees waiting to check in (consistent with organizer roster)
   const pendingAttendees = roster.filter(
     p => !checkedInIds.has(p.id) && !checkedInNames.has(p.name.trim().toLowerCase())
-  ).slice(0, 8);
+  );
 
   return (
     <div className="max-w-4xl mx-auto py-6 px-4 sm:px-6">
@@ -281,9 +281,9 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
                 <Search className="w-3.5 h-3.5 text-blue-600" />
                 快速點選您的姓名簽到（待報到名單）：
               </span>
-              <span className="text-[11px] text-blue-600">共 {pendingAttendees.length} 位</span>
+              <span className="text-[11px] text-blue-600 font-bold">共 {pendingAttendees.length} 位</span>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 max-h-60 overflow-y-auto pr-1">
               {pendingAttendees.map(p => (
                 <button
                   type="button"

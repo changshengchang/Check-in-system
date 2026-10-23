@@ -341,10 +341,10 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
                 <Search className="w-3.5 h-3.5 text-amber-700" />
                 點選您的姓名快速帶入簽退（到場待簽退名單）：
               </span>
-              <span className="text-[11px] text-amber-800 font-semibold">共 {pendingCheckOutAttendees.length} 位</span>
+              <span className="text-[11px] text-amber-800 font-bold">共 {pendingCheckOutAttendees.length} 位</span>
             </div>
-            <div className="flex flex-wrap gap-2">
-              {pendingCheckOutAttendees.slice(0, 10).map(p => (
+            <div className="flex flex-wrap gap-2 max-h-60 overflow-y-auto pr-1">
+              {pendingCheckOutAttendees.map(p => (
                 <button
                   type="button"
                   key={p.id}
