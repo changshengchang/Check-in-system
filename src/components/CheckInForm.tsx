@@ -44,6 +44,12 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
 
   // Success dialog state
   const [recentCheckedIn, setRecentCheckedIn] = useState<CheckInRecord | null>(null);
+  // Duplicate alert modal state
+  const [showDuplicateModal, setShowDuplicateModal] = useState<{
+    name: string;
+    time: string;
+    message: string;
+  } | null>(null);
 
   const signaturePadRef = useRef<SignaturePadHandle | null>(null);
 
@@ -71,7 +77,7 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
 
     // Check if already checked in
     if (checkedInIds.has(p.id) || checkedInNames.has(p.name.trim().toLowerCase())) {
-      setErrorMessage(`提醒：${p.name} 似乎已完成過報到！若要重新簽署將會更新原報到紀錄。`);
+      setErrorMessage(`【重複簽到警示】「${p.name}」已完成過報到，送出時系統將拒絕重複簽到！`);
     }
   };
 
@@ -88,7 +94,7 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
       setIsWalkIn(false);
 
       if (checkedInIds.has(exact.id) || checkedInNames.has(exact.name.trim().toLowerCase())) {
-        setErrorMessage(`提醒：${exact.name} 似乎已於先前完成報到。`);
+        setErrorMessage(`【重複簽到警示】「${exact.name}」已於先前完成報到。`);
       }
     } else {
       if (matchedParticipant && matchedParticipant.name !== val) {
@@ -104,6 +110,27 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
     const trimmedName = name.trim();
     if (!trimmedName) {
       setErrorMessage('請輸入參加人員「姓名」');
+      return;
+    }
+
+    // Requirement 4: Duplicate Check-In verification (重複簽到定義:已完成簽到名冊中如已有相同姓名,則視為重複簽到)
+    const duplicateRecord = existingCheckIns.find(
+      c => c.name.trim().toLowerCase() === trimmedName.toLowerCase() ||
+           (matchedParticipant && c.participantId === matchedParticipant.id)
+    );
+
+    if (duplicateRecord) {
+      const timeStr = duplicateRecord.checkInTime
+        ? new Date(duplicateRecord.checkInTime).toLocaleTimeString('zh-TW', { hour12: false })
+        : '今日稍早';
+      const dupMsg = `【重複簽到警示】「${trimmedName}」已於 ${timeStr} 完成活動簽到，系統判定為重複簽到，已拒絕送出！`;
+      setErrorMessage(dupMsg);
+      setShowDuplicateModal({
+        name: trimmedName,
+        time: timeStr,
+        message: dupMsg
+      });
+      setIsSubmitting(false);
       return;
     }
 
@@ -158,6 +185,7 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
     setIsWalkIn(false);
     setErrorMessage('');
     setRecentCheckedIn(null);
+    setShowDuplicateModal(null);
     if (signaturePadRef.current) {
       signaturePadRef.current.clear();
     }
@@ -170,15 +198,15 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
 
   return (
     <div className="max-w-4xl mx-auto py-6 px-4 sm:px-6">
-      {/* Event Info Card Banner */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-blue-700 via-blue-800 to-indigo-900 text-white p-6 mb-6 shadow-lg">
+      {/* Event Info Card Banner - Ocean Blue Theme */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-blue-700 via-blue-800 to-indigo-900 text-white p-6 mb-6 shadow-lg border-t-4 border-blue-400">
         <div className="relative z-10">
-          <div className="flex items-center gap-2 text-blue-200 text-xs font-semibold uppercase tracking-wider mb-1">
-            <Sparkles className="w-4 h-4 text-amber-300" />
-            <span>員工訓練與活動現場報到處</span>
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/30 text-blue-100 border border-blue-400/30 text-xs font-bold mb-2">
+            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+            <span>【學員簽到端 · 入場報到專區】</span>
           </div>
 
-          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2">
+          <h2 className="text-2xl sm:text-3xl font-black tracking-tight mb-2 text-white">
             {eventInfo.title}
           </h2>
 
@@ -210,14 +238,17 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
       </div>
 
       {/* Main Check-In Card */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div className="bg-white rounded-2xl shadow-sm border-2 border-blue-200/80 overflow-hidden">
+        <div className="p-6 border-b border-blue-100 bg-blue-50/40 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+            <div className="inline-block px-2.5 py-0.5 rounded text-[11px] font-bold bg-blue-100 text-blue-800 mb-1">
+              STEP 1 · 現場入場簽到
+            </div>
+            <h3 className="text-xl font-black text-blue-950 flex items-center gap-2">
               <UserCheck className="w-5 h-5 text-blue-600" />
               <span>學員簽到報名表單</span>
             </h3>
-            <p className="text-xs text-slate-500 mt-0.5">
+            <p className="text-xs text-blue-800/80 mt-0.5 font-medium">
               請輸入或點選姓名，確認身分與職稱後，於手寫簽署區完成手寫簽名
             </p>
           </div>
@@ -487,15 +518,46 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
                 <span>下一位學員報到</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Duplicate Check-In Alert Modal */}
+      {showDuplicateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl border-2 border-rose-300 max-w-md w-full overflow-hidden text-center p-6 sm:p-8">
+            <div className="w-16 h-16 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto mb-4 ring-8 ring-rose-50 animate-bounce">
+              <AlertCircle className="w-10 h-10" />
+            </div>
+
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-100 text-rose-800 text-xs font-bold mb-2">
+              <span>【重複簽到警示 · 拒絕送出】</span>
+            </div>
+
+            <h3 className="text-xl font-black text-slate-900 tracking-tight">
+              學員「{showDuplicateModal.name}」已完成簽到！
+            </h3>
+
+            <div className="mt-4 p-4 rounded-2xl bg-rose-50/70 border border-rose-200 text-left text-xs text-rose-900 space-y-2">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <p className="font-semibold leading-relaxed">
+                  系統偵測到簽到名冊中已有相同姓名「{showDuplicateModal.name}」於 <span className="font-bold underline">{showDuplicateModal.time}</span> 完成簽到手續。
+                </p>
+              </div>
+              <p className="text-slate-600 text-[11px] pl-6">
+                依活動管理規定，每位學員僅需簽到一次，請勿重複提交。如有換人或修改需求，請向現場人事或主辦承辦人洽詢。
+              </p>
+            </div>
+
+            <div className="mt-6">
               <button
                 type="button"
-                onClick={() => {
-                  handleResetForNext();
-                  onNavigateToDashboard();
-                }}
-                className="py-3 px-4 rounded-xl font-semibold text-xs text-slate-600 hover:bg-slate-100 transition-colors"
+                onClick={() => setShowDuplicateModal(null)}
+                className="w-full py-3 px-4 rounded-xl font-bold text-sm bg-rose-600 hover:bg-rose-700 text-white shadow-md transition-colors cursor-pointer"
               >
-                查看承辦人統計
+                我知道了，返回表單
               </button>
             </div>
           </div>

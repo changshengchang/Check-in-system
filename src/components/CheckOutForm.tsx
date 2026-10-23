@@ -2,7 +2,11 @@ import React, { useState, useRef, useEffect } from 'react';
 import confetti from 'canvas-confetti';
 import { CheckInRecord, EventInfo, CombinedAttendeeView } from '../types';
 import { SignaturePad, SignaturePadHandle } from './SignaturePad';
-import { calculateParticipationDuration } from '../utils/storage';
+import {
+  calculateParticipationDuration,
+  calculateCompTime,
+  formatMinutesDisplay
+} from '../utils/storage';
 import {
   LogOut,
   CheckCircle2,
@@ -17,14 +21,28 @@ import {
   Briefcase,
   Building,
   Hourglass,
-  UserCheck
+  UserCheck,
+  Car,
+  FileCheck2,
+  Award
 } from 'lucide-react';
 
 interface CheckOutFormProps {
   eventInfo: EventInfo;
   attendees: CombinedAttendeeView[];
   existingCheckIns: CheckInRecord[];
-  onCheckOutSuccess: (checkInId: string, checkOutTime: string, signatureDataUrl: string, durationMinutes: number, durationDisplay: string) => void;
+  onCheckOutSuccess: (
+    checkInId: string,
+    checkOutTime: string,
+    signatureDataUrl: string,
+    durationMinutes: number,
+    durationDisplay: string,
+    travelMinutes?: number,
+    travelDisplay?: string,
+    compTimeMinutes?: number,
+    compTimeDisplay?: string
+  ) => void;
+  onToggleHrVerify?: (attendeeId: string) => void;
   onNavigateToDashboard: () => void;
   onNavigateToCheckIn: () => void;
 }
@@ -34,6 +52,7 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
   attendees,
   existingCheckIns,
   onCheckOutSuccess,
+  onToggleHrVerify,
   onNavigateToDashboard,
   onNavigateToCheckIn
 }) => {
@@ -43,6 +62,16 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
 
+  // Travel time (路途時間，單位分鐘，公所預設 60 分鐘，可微調)
+  const [travelMinutes, setTravelMinutes] = useState<number>(60);
+
+  // Duplicate Check-Out modal
+  const [showDuplicateModal, setShowDuplicateModal] = useState<{
+    name: string;
+    time: string;
+    message: string;
+  } | null>(null);
+
   // Success dialog state
   const [recentCheckedOut, setRecentCheckedOut] = useState<{
     name: string;
@@ -51,7 +80,10 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
     checkInTime: string;
     checkOutTime: string;
     durationDisplay: string;
+    travelDisplay: string;
+    compTimeDisplay: string;
     signatureDataUrl: string;
+    hrVerified?: boolean;
   } | null>(null);
 
   const signaturePadRef = useRef<SignaturePadHandle | null>(null);
@@ -83,9 +115,12 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
     setName(a.name);
     setSelectedAttendee(a);
     setErrorMessage('');
+    if (a.travelMinutes !== undefined) {
+      setTravelMinutes(a.travelMinutes);
+    }
 
     if (a.checkOutTime) {
-      setErrorMessage(`提醒：${a.name} 已於 ${new Date(a.checkOutTime).toLocaleTimeString('zh-TW', { hour12: false })} 完成過簽退！若再次簽署將更新簽退時間與時數。`);
+      setErrorMessage(`【重複簽退警示】「${a.name}」已於 ${new Date(a.checkOutTime).toLocaleTimeString('zh-TW', { hour12: false })} 完成過簽退，送出時系統將拒絕重複簽退！`);
     }
   };
 
@@ -96,8 +131,11 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
     const exact = checkedInAttendees.find(p => p.name.trim() === val.trim());
     if (exact) {
       setSelectedAttendee(exact);
+      if (exact.travelMinutes !== undefined) {
+        setTravelMinutes(exact.travelMinutes);
+      }
       if (exact.checkOutTime) {
-        setErrorMessage(`提醒：${exact.name} 已於先前完成過簽退。再次簽署將更新紀錄。`);
+        setErrorMessage(`【重複簽退警示】「${exact.name}」已於先前完成過簽退。`);
       }
     } else {
       if (selectedAttendee && selectedAttendee.name !== val) {
@@ -106,9 +144,14 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
     }
   };
 
-  // Calculate live preview duration
+  // Calculate live preview duration: check-out time - check-in time
   const liveDuration = selectedAttendee?.checkInTime
     ? calculateParticipationDuration(selectedAttendee.checkInTime, currentTime.toISOString())
+    : null;
+
+  // Live Comp Time: "參加時間(計算)" 加上 "路途時間"
+  const liveCompCalculation = liveDuration
+    ? calculateCompTime(liveDuration.minutes, travelMinutes)
     : null;
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -122,6 +165,27 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
 
     if (!selectedAttendee.checkInTime) {
       setErrorMessage('此學員查無簽到時間紀錄，無法計算簽退時數！');
+      return;
+    }
+
+    // Requirement 4: Duplicate Check-Out verification
+    // 重複簽退定義: 已完成簽退名冊中如已有相同姓名且已簽退，出現重複簽退訊息並拒絕送出
+    const duplicateCheckOut = attendees.find(
+      a => a.name.trim().toLowerCase() === selectedAttendee.name.trim().toLowerCase() && !!a.checkOutTime
+    );
+
+    if (duplicateCheckOut) {
+      const timeStr = duplicateCheckOut.checkOutTime
+        ? new Date(duplicateCheckOut.checkOutTime).toLocaleTimeString('zh-TW', { hour12: false })
+        : '今日稍早';
+      const dupMsg = `【重複簽退警示】「${selectedAttendee.name}」已於 ${timeStr} 完成簽退，系統判定為重複簽退，已拒絕送出！`;
+      setErrorMessage(dupMsg);
+      setShowDuplicateModal({
+        name: selectedAttendee.name,
+        time: timeStr,
+        message: dupMsg
+      });
+      setIsSubmitting(false);
       return;
     }
 
@@ -143,6 +207,10 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
     const durationMinutes = duration?.minutes || 1;
     const durationDisplay = duration?.display || '1分鐘';
 
+    // Requirement 3: 核予補休時間 ＝ 參加時間(計算) 加上 路途時間
+    const compResult = calculateCompTime(durationMinutes, travelMinutes);
+    const travelDisplay = travelMinutes > 0 ? formatMinutesDisplay(travelMinutes) : '0分鐘';
+
     // Target check-in record id
     const targetCheckInId = selectedAttendee.checkInId || selectedAttendee.id;
 
@@ -162,7 +230,11 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
       nowIso,
       signatureDataUrl,
       durationMinutes,
-      durationDisplay
+      durationDisplay,
+      travelMinutes,
+      travelDisplay,
+      compResult.compMinutes,
+      compResult.compDisplay
     );
 
     setRecentCheckedOut({
@@ -172,7 +244,10 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
       checkInTime: selectedAttendee.checkInTime,
       checkOutTime: nowIso,
       durationDisplay,
-      signatureDataUrl
+      travelDisplay,
+      compTimeDisplay: compResult.compDisplay,
+      signatureDataUrl,
+      hrVerified: selectedAttendee.hrVerified
     });
 
     setIsSubmitting(false);
@@ -183,6 +258,7 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
     setSelectedAttendee(null);
     setErrorMessage('');
     setRecentCheckedOut(null);
+    setShowDuplicateModal(null);
     if (signaturePadRef.current) {
       signaturePadRef.current.clear();
     }
@@ -190,15 +266,15 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
 
   return (
     <div className="max-w-4xl mx-auto py-6 px-4 sm:px-6">
-      {/* Event Info Card Banner */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-amber-700 via-amber-800 to-orange-900 text-white p-6 mb-6 shadow-lg">
+      {/* Event Info Card Banner - Warm Amber / Sunset Orange Theme */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-amber-700 via-orange-800 to-amber-950 text-white p-6 mb-6 shadow-lg border-t-4 border-amber-400">
         <div className="relative z-10">
-          <div className="flex items-center gap-2 text-amber-200 text-xs font-semibold uppercase tracking-wider mb-1">
-            <Sparkles className="w-4 h-4 text-amber-300" />
-            <span>苗栗縣三義鄉公所 · 學員簽退與參加時數結算處</span>
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/30 text-amber-100 border border-amber-400/30 text-xs font-bold mb-2">
+            <span className="w-2 h-2 rounded-full bg-amber-300 animate-pulse" />
+            <span>【學員簽退端 · 離席登記與時數結算專區】</span>
           </div>
 
-          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2">
+          <h2 className="text-2xl sm:text-3xl font-black tracking-tight mb-2 text-white">
             {eventInfo.title}
           </h2>
 
@@ -217,17 +293,19 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
             </div>
           </div>
 
-          <div className="mt-3 bg-amber-950/60 rounded-lg p-2.5 text-xs text-amber-100 flex items-center justify-between gap-2 border border-amber-400/20">
+          <div className="mt-3 bg-amber-950/70 rounded-lg p-2.5 text-xs text-amber-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border border-amber-400/30">
             <div className="flex items-center gap-2">
               <Hourglass className="w-4 h-4 text-amber-300 shrink-0" />
-              <span>簽退將由系統自動計算【參加時間 = 簽退時間 - 簽到時間】，並產製研習時數證明報表。</span>
+              <span>
+                系統主動計算【參加時間 ＝ 簽退時間 － 簽到時間】及【核予補休時間 ＝ 參加時間 ＋ 路途時間】。
+              </span>
             </div>
             <button
               type="button"
               onClick={onNavigateToCheckIn}
-              className="text-amber-200 hover:text-white underline text-[11px] whitespace-nowrap cursor-pointer"
+              className="text-amber-300 hover:text-white underline text-[11px] whitespace-nowrap cursor-pointer self-start sm:self-auto font-medium"
             >
-              尚未簽到？切換至簽到端 →
+              尚未入場？前往簽到端 →
             </button>
           </div>
         </div>
@@ -237,22 +315,25 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
       </div>
 
       {/* Main Check-Out Card */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div className="bg-white rounded-2xl shadow-sm border-2 border-amber-200/80 overflow-hidden">
+        <div className="p-6 border-b border-amber-100 bg-amber-50/40 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+            <div className="inline-block px-2.5 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-900 mb-1">
+              STEP 2 · 活動結束離席簽退
+            </div>
+            <h3 className="text-xl font-black text-amber-950 flex items-center gap-2">
               <LogOut className="w-5 h-5 text-amber-600" />
-              <span>學員簽退表單 (核算研習參加時間)</span>
+              <span>學員簽退與核予補休結算表單</span>
             </h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              請搜尋或點選您的姓名，確認簽到時間與累計參加時間後，於簽署區手寫簽名完成簽退
+            <p className="text-xs text-amber-900/80 mt-0.5 font-medium">
+              請搜尋或點選您的姓名，確認參加時間與路途時間後手寫簽名送出
             </p>
           </div>
 
-          <div className="text-right">
+          <div className="text-left sm:text-right">
             <span className="text-xs text-slate-500">已簽到人數：</span>
-            <span className="font-bold text-slate-800 text-sm">{checkedInAttendees.length} 位</span>
-            <span className="text-xs text-emerald-600 font-semibold ml-2">
+            <span className="font-bold text-amber-950 text-sm">{checkedInAttendees.length} 位</span>
+            <span className="text-xs text-emerald-700 font-bold ml-2">
               (已簽退：{checkedInAttendees.filter(a => a.checkOutTime).length} 人)
             </span>
           </div>
@@ -260,13 +341,13 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
 
         {/* Quick Click Chips: Attendees waiting to sign out */}
         {pendingCheckOutAttendees.length > 0 && (
-          <div className="px-6 py-3.5 bg-amber-50/50 border-b border-amber-100/60">
+          <div className="px-6 py-3.5 bg-amber-50/60 border-b border-amber-100">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-amber-900 flex items-center gap-1.5">
+              <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
                 <Search className="w-3.5 h-3.5 text-amber-700" />
-                點選您的姓名進行簽退（已到場待簽退）：
+                點選您的姓名快速帶入簽退（到場待簽退名單）：
               </span>
-              <span className="text-[11px] text-amber-700 font-medium">共 {pendingCheckOutAttendees.length} 位</span>
+              <span className="text-[11px] text-amber-800 font-semibold">共 {pendingCheckOutAttendees.length} 位</span>
             </div>
             <div className="flex flex-wrap gap-2">
               {pendingCheckOutAttendees.slice(0, 10).map(p => (
@@ -277,11 +358,14 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
                   className={`text-xs px-2.5 py-1.5 rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer ${
                     selectedAttendee?.id === p.id
                       ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
-                      : 'bg-white text-slate-700 border-slate-200 hover:border-amber-400 hover:bg-amber-50'
+                      : 'bg-white text-slate-700 border-amber-200 hover:border-amber-400 hover:bg-amber-100/60'
                   }`}
                 >
                   <span className="font-bold">{p.name}</span>
                   <span className="text-[11px] opacity-75">({p.title})</span>
+                  {p.hrVerified && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" title="人事已覆核" />
+                  )}
                 </button>
               ))}
             </div>
@@ -291,14 +375,14 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
           {/* Name input with auto-suggest among checked-in participants */}
           <div className="relative">
-            <label className="block text-sm font-bold text-slate-800 mb-1.5 flex items-center justify-between">
+            <label className="block text-sm font-bold text-amber-950 mb-1.5 flex items-center justify-between">
               <span className="flex items-center gap-1">
-                <span>參加人員「姓名」</span>
+                <span>簽退人員「姓名」</span>
                 <span className="text-rose-500 font-bold">*必填</span>
               </span>
               {selectedAttendee && (
-                <span className="text-xs text-emerald-600 font-medium flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
+                <span className="text-xs text-emerald-700 font-bold flex items-center gap-1 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                   已匹配簽到紀錄
                 </span>
               )}
@@ -310,7 +394,7 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
                 required
                 value={name}
                 onChange={e => handleNameChange(e.target.value)}
-                placeholder="輸入姓名或點選上方名冊快速帶入 (例如: 王大偉)"
+                placeholder="輸入姓名或點選上方名單快速帶入 (例如: 王大偉)"
                 className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-base font-semibold text-slate-900 bg-white shadow-xs"
               />
               {name && (
@@ -329,8 +413,8 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
 
             {/* Suggestions dropdown */}
             {searchSuggestions.length > 0 && !selectedAttendee && (
-              <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden divide-y divide-slate-100">
-                <div className="px-3 py-1.5 text-[11px] font-semibold text-slate-400 bg-slate-50">
+              <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl shadow-lg border border-amber-200 overflow-hidden divide-y divide-amber-100">
+                <div className="px-3 py-1.5 text-[11px] font-semibold text-amber-900 bg-amber-50">
                   找到已簽到之學員，點擊即可進行簽退：
                 </div>
                 {searchSuggestions.map(p => (
@@ -354,7 +438,7 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
                           已簽退
                         </span>
                       ) : (
-                        <span className="text-[11px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-semibold">
+                        <span className="text-[11px] bg-amber-100 text-amber-900 px-2 py-0.5 rounded font-bold">
                           點選簽退
                         </span>
                       )}
@@ -367,32 +451,52 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
 
           {/* Attendee Details & Participation Time Computation Display */}
           {selectedAttendee && (
-            <div className="rounded-2xl border-2 border-amber-300 bg-gradient-to-br from-amber-50/80 to-orange-50/60 p-4 space-y-3">
-              <div className="flex items-center justify-between pb-2 border-b border-amber-200/80">
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-slate-900 text-base">{selectedAttendee.name}</span>
-                  <span className="text-xs bg-white px-2 py-0.5 rounded border border-amber-300 text-slate-700 font-medium">
+            <div className="rounded-2xl border-2 border-amber-300 bg-gradient-to-br from-amber-50/80 to-orange-50/60 p-4 sm:p-5 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between pb-3 border-b border-amber-200/80 gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-extrabold text-amber-950 text-lg">{selectedAttendee.name}</span>
+                  <span className="text-xs bg-white px-2 py-0.5 rounded border border-amber-300 text-amber-900 font-bold">
                     {selectedAttendee.title}
                   </span>
                   {selectedAttendee.department && (
-                    <span className="text-xs text-slate-500">{selectedAttendee.department}</span>
+                    <span className="text-xs text-slate-600">({selectedAttendee.department})</span>
                   )}
                 </div>
-                {selectedAttendee.hrVerified && (
-                  <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full border border-emerald-300 flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3" />
-                    <span>人事已覆核</span>
-                  </span>
-                )}
+
+                {/* HR Verification Status (人事覆核功能) */}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500 font-medium">人事覆核狀態：</span>
+                  {selectedAttendee.hrVerified ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>已覆核確認</span>
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                      <Clock className="w-3.5 h-3.5 text-amber-600" />
+                      <span>未覆核 (簽退後請告知人事單位)</span>
+                    </span>
+                  )}
+                  {onToggleHrVerify && (
+                    <button
+                      type="button"
+                      onClick={() => onToggleHrVerify(selectedAttendee.id)}
+                      className="text-[11px] font-semibold text-indigo-700 bg-white hover:bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200 transition-colors"
+                      title="若現場人事在旁，可點擊直接切換覆核狀態"
+                    >
+                      {selectedAttendee.hrVerified ? '取消覆核' : '人事現場覆核'}
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {/* Time Calculation Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Time Calculation Grid: 4 Pillars */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                 {/* 1. Check-In Time */}
                 <div className="bg-white p-3 rounded-xl border border-amber-200 shadow-2xs">
                   <div className="text-[11px] text-slate-500 font-medium flex items-center gap-1">
                     <Clock className="w-3.5 h-3.5 text-blue-600" />
-                    <span>簽到時間 (Check-in)</span>
+                    <span>簽到時間</span>
                   </div>
                   <div className="text-base font-extrabold text-slate-800 font-mono mt-1">
                     {selectedAttendee.checkInTime
@@ -410,7 +514,7 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
                 <div className="bg-white p-3 rounded-xl border border-amber-200 shadow-2xs">
                   <div className="text-[11px] text-slate-500 font-medium flex items-center gap-1">
                     <LogOut className="w-3.5 h-3.5 text-amber-600" />
-                    <span>簽退時間 (Check-out)</span>
+                    <span>簽退時間</span>
                   </div>
                   <div className="text-base font-extrabold text-amber-700 font-mono mt-1">
                     {currentTime.toLocaleTimeString('zh-TW', { hour12: false })}
@@ -421,17 +525,85 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
                 </div>
 
                 {/* 3. Calculated Duration (簽退時間 - 簽到時間) */}
-                <div className="bg-gradient-to-br from-amber-600 to-orange-600 text-white p-3 rounded-xl shadow-xs">
-                  <div className="text-[11px] text-amber-100 font-medium flex items-center gap-1">
-                    <Hourglass className="w-3.5 h-3.5 text-amber-200" />
-                    <span>主動計算「參加時間」</span>
+                <div className="bg-white p-3 rounded-xl border border-amber-200 shadow-2xs">
+                  <div className="text-[11px] text-slate-500 font-medium flex items-center gap-1">
+                    <Hourglass className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>參加時間 (計算)</span>
                   </div>
-                  <div className="text-xl font-black text-white tracking-tight mt-1">
+                  <div className="text-base font-extrabold text-indigo-700 font-mono mt-1">
                     {liveDuration ? liveDuration.display : '計算中...'}
                   </div>
-                  <div className="text-[10px] text-amber-100/90 mt-0.5">
-                    {liveDuration ? `(共約 ${liveDuration.minutes} 分鐘)` : '簽退 - 簽到時間差'}
+                  <div className="text-[10px] text-indigo-500 font-medium mt-0.5">
+                    {liveDuration ? `共約 ${liveDuration.minutes} 分鐘` : '簽退 - 簽到時間差'}
                   </div>
+                </div>
+
+                {/* 4. Total Approved Comp Time (參加時間 + 路途時間) */}
+                <div className="bg-gradient-to-br from-amber-600 to-orange-700 text-white p-3 rounded-xl shadow-xs">
+                  <div className="text-[11px] text-amber-100 font-bold flex items-center gap-1">
+                    <Award className="w-3.5 h-3.5 text-amber-200" />
+                    <span>核予補休時間</span>
+                  </div>
+                  <div className="text-lg font-black text-white tracking-tight mt-1">
+                    {liveCompCalculation ? liveCompCalculation.compDisplay : '計算中...'}
+                  </div>
+                  <div className="text-[10px] text-amber-100 mt-0.5 font-medium">
+                    參加時間 ＋ 路途時間 ({travelMinutes}分)
+                  </div>
+                </div>
+              </div>
+
+              {/* Requirement 3: Travel Time Setting Section */}
+              <div className="bg-white/90 p-3.5 rounded-xl border border-amber-200">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Car className="w-4 h-4 text-amber-700" />
+                    <span className="text-xs font-bold text-amber-950">
+                      公務路途時間 (單位：分鐘)：
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      依公所派訓規定往返路程核給，將主動加計於「核予補休時間」
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {[0, 30, 60, 90, 120].map(mins => (
+                      <button
+                        type="button"
+                        key={mins}
+                        onClick={() => setTravelMinutes(mins)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          travelMinutes === mins
+                            ? 'bg-amber-600 text-white shadow-2xs'
+                            : 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200'
+                        }`}
+                      >
+                        {mins === 0 ? '無路途 (0分)' : `${mins}分鐘`}
+                      </button>
+                    ))}
+                    <div className="flex items-center gap-1 ml-1">
+                      <input
+                        type="number"
+                        min="0"
+                        max="600"
+                        step="10"
+                        value={travelMinutes}
+                        onChange={e => setTravelMinutes(Math.max(0, parseInt(e.target.value) || 0))}
+                        className="w-16 px-2 py-1 text-xs font-bold rounded-lg border border-slate-300 text-center"
+                      />
+                      <span className="text-xs text-slate-500">分</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* HR Verification Alert Banner */}
+              <div className="bg-amber-100/70 rounded-xl p-3 border border-amber-300/80 flex items-start gap-2 text-xs text-amber-950">
+                <FileCheck2 className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold">【人事覆核規定事項】</span>
+                  <span>
+                    簽退手續完成後，請記得向現場人事單位告知【覆核】，以確保參加時間與核予補休總時數（{liveCompCalculation?.compDisplay}）經人事核章後正式生效。
+                  </span>
                 </div>
               </div>
             </div>
@@ -439,13 +611,17 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
 
           {/* Interactive Signature Pad for Check-Out */}
           <div className="pt-2">
+            <label className="block text-xs font-bold text-amber-950 mb-1.5 flex items-center justify-between">
+              <span>學員簽退手寫簽署區</span>
+              <span className="text-[11px] text-amber-800">請在下方以觸控筆或手指端正簽名</span>
+            </label>
             <SignaturePad ref={signaturePadRef} height={180} />
           </div>
 
           {/* Error Message */}
           {errorMessage && (
-            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+            <div className="p-3.5 rounded-xl bg-rose-50 border-2 border-rose-300 text-rose-800 text-xs flex items-center gap-2 font-medium">
+              <AlertCircle className="w-5 h-5 shrink-0 text-rose-600" />
               <span>{errorMessage}</span>
             </div>
           )}
@@ -455,10 +631,10 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full py-3.5 px-6 rounded-xl font-bold text-white text-base bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
+              className="w-full py-4 px-6 rounded-xl font-bold text-white text-base bg-gradient-to-r from-amber-600 via-orange-600 to-amber-700 hover:from-amber-700 hover:to-orange-700 shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
             >
               <LogOut className="w-5 h-5" />
-              <span>確認送出並完成活動簽退 (結算參加時間)</span>
+              <span>確認送出並完成活動簽退 (結算參加時間與補休)</span>
             </button>
           </div>
         </form>
@@ -475,8 +651,9 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
             <h3 className="text-2xl font-black text-slate-900 tracking-tight">
               簽退手續完成！
             </h3>
-            <p className="text-sm font-bold text-amber-700 mt-1.5">
-              感謝您參加苗栗縣三義鄉公所培訓活動
+            {/* Requirement 1: Red notice matching check-in */}
+            <p className="text-sm font-bold text-red-600 mt-1.5 tracking-wide">
+              恭喜完成本次活動簽退！請記得向人事單位告知【覆核】
             </p>
 
             {/* Check-out Details Card */}
@@ -503,16 +680,37 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
                   {new Date(recentCheckedOut.checkOutTime).toLocaleTimeString('zh-TW', { hour12: false })}
                 </span>
               </div>
-
-              {/* Highlighted Participation Duration */}
-              <div className="p-3 bg-white rounded-xl border border-amber-300 flex items-center justify-between shadow-2xs">
-                <div className="flex items-center gap-1.5 text-slate-700 font-semibold">
-                  <Hourglass className="w-4 h-4 text-amber-600" />
-                  <span>核算總參加時間：</span>
-                </div>
-                <div className="text-lg font-black text-amber-700 font-mono">
+              <div className="flex justify-between items-center py-1 border-b border-amber-200/80">
+                <span className="text-slate-500">參加時間 (計算)</span>
+                <span className="font-bold text-indigo-700 font-mono">
                   {recentCheckedOut.durationDisplay}
+                </span>
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-amber-200/80">
+                <span className="text-slate-500">路途時間</span>
+                <span className="font-bold text-amber-800 font-mono">
+                  {recentCheckedOut.travelDisplay}
+                </span>
+              </div>
+
+              {/* Highlighted Total Approved Comp Time */}
+              <div className="p-3 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-xl flex items-center justify-between shadow-2xs">
+                <div className="flex items-center gap-1.5 font-bold">
+                  <Award className="w-4 h-4 text-amber-200" />
+                  <span>核予補休時間：</span>
                 </div>
+                <div className="text-lg font-black font-mono">
+                  {recentCheckedOut.compTimeDisplay}
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center py-1 border-b border-amber-200/80">
+                <span className="text-slate-500">人事覆核</span>
+                <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                  recentCheckedOut.hrVerified ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-amber-100 text-amber-800 border border-amber-300'
+                }`}>
+                  {recentCheckedOut.hrVerified ? '已覆核' : '未覆核 (請記得向人事單位出示告知)'}
+                </span>
               </div>
 
               {/* Signature snapshot thumbnail */}
@@ -549,6 +747,47 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
                 className="py-3 px-4 rounded-xl font-semibold text-xs text-slate-600 hover:bg-slate-100 transition-colors"
               >
                 查看統計清冊
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Duplicate Check-Out Alert Modal */}
+      {showDuplicateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl border-2 border-rose-300 max-w-md w-full overflow-hidden text-center p-6 sm:p-8">
+            <div className="w-16 h-16 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto mb-4 ring-8 ring-rose-50 animate-bounce">
+              <AlertCircle className="w-10 h-10" />
+            </div>
+
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-100 text-rose-800 text-xs font-bold mb-2">
+              <span>【重複簽退警示 · 拒絕送出】</span>
+            </div>
+
+            <h3 className="text-xl font-black text-slate-900 tracking-tight">
+              學員「{showDuplicateModal.name}」已完成簽退！
+            </h3>
+
+            <div className="mt-4 p-4 rounded-2xl bg-rose-50/70 border border-rose-200 text-left text-xs text-rose-900 space-y-2">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <p className="font-semibold leading-relaxed">
+                  系統偵測到簽退名冊中已有「{showDuplicateModal.name}」於 <span className="font-bold underline">{showDuplicateModal.time}</span> 完成簽退手續。
+                </p>
+              </div>
+              <p className="text-slate-600 text-[11px] pl-6">
+                依活動管理規定，每位學員僅能簽退一次以利時數核算，系統已拒絕重複送出。如有任何時數更正需求，請洽現場人事人員協助。
+              </p>
+            </div>
+
+            <div className="mt-6">
+              <button
+                type="button"
+                onClick={() => setShowDuplicateModal(null)}
+                className="w-full py-3 px-4 rounded-xl font-bold text-sm bg-rose-600 hover:bg-rose-700 text-white shadow-md transition-colors cursor-pointer"
+              >
+                我知道了，返回表單
               </button>
             </div>
           </div>

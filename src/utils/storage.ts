@@ -15,6 +15,19 @@ export const DEFAULT_EVENT_INFO: EventInfo = {
 };
 
 /**
+ * Formats minutes into human-readable Chinese string
+ * e.g. 90 -> "1小時 30分", 45 -> "45分鐘", 120 -> "2小時"
+ */
+export function formatMinutesDisplay(minutes?: number): string {
+  if (!minutes || minutes <= 0) return '0分鐘';
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (hours === 0) return `${mins}分鐘`;
+  if (mins === 0) return `${hours}小時`;
+  return `${hours}小時 ${mins}分`;
+}
+
+/**
  * Calculates participation duration: check-out time minus check-in time
  */
 export function calculateParticipationDuration(
@@ -27,15 +40,23 @@ export function calculateParticipationDuration(
   if (isNaN(inTime) || isNaN(outTime) || outTime < inTime) return null;
 
   const totalMinutes = Math.max(1, Math.round((outTime - inTime) / 60000));
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-
-  if (hours === 0) {
-    return { minutes: totalMinutes, display: `${minutes}分鐘` };
-  }
   return {
     minutes: totalMinutes,
-    display: `${hours}小時${minutes > 0 ? ` ${minutes}分` : ''}`
+    display: formatMinutesDisplay(totalMinutes)
+  };
+}
+
+/**
+ * Calculates Comp Time (核予補休時間): "參加時間(計算)" 加上 "路途時間"
+ */
+export function calculateCompTime(
+  durationMinutes: number = 0,
+  travelMinutes: number = 0
+): { compMinutes: number; compDisplay: string } {
+  const compMinutes = Math.max(0, (durationMinutes || 0) + (travelMinutes || 0));
+  return {
+    compMinutes,
+    compDisplay: formatMinutesDisplay(compMinutes)
   };
 }
 
@@ -182,6 +203,12 @@ export function buildCombinedAttendeeList(
         matchedCheckIn.checkInTime,
         matchedCheckIn.checkOutTime
       );
+      const durationMins = calcDuration?.minutes || matchedCheckIn.durationMinutes;
+      const durationDisp = calcDuration?.display || matchedCheckIn.durationDisplay;
+      const travelMins = matchedCheckIn.travelMinutes ?? p.travelMinutes ?? 0;
+      const comp = durationMins !== undefined
+        ? calculateCompTime(durationMins, travelMins)
+        : undefined;
 
       list.push({
         id: p.id,
@@ -198,10 +225,15 @@ export function buildCombinedAttendeeList(
         hrVerifiedAt: matchedCheckIn.hrVerifiedAt,
         checkOutTime: matchedCheckIn.checkOutTime,
         checkOutSignatureDataUrl: matchedCheckIn.checkOutSignatureDataUrl,
-        durationMinutes: calcDuration?.minutes || matchedCheckIn.durationMinutes,
-        durationDisplay: calcDuration?.display || matchedCheckIn.durationDisplay
+        durationMinutes: durationMins,
+        durationDisplay: durationDisp,
+        travelMinutes: travelMins,
+        travelDisplay: travelMins > 0 ? formatMinutesDisplay(travelMins) : '0分鐘',
+        compTimeMinutes: comp?.compMinutes,
+        compTimeDisplay: comp?.compDisplay
       });
     } else {
+      const travelMins = p.travelMinutes ?? 0;
       list.push({
         id: p.id,
         name: p.name,
@@ -209,7 +241,9 @@ export function buildCombinedAttendeeList(
         department: p.department,
         status: 'NOT_CHECKED_IN',
         isWalkIn: false,
-        hrVerified: false
+        hrVerified: false,
+        travelMinutes: travelMins,
+        travelDisplay: travelMins > 0 ? formatMinutesDisplay(travelMins) : '0分鐘'
       });
     }
   });
@@ -221,6 +255,12 @@ export function buildCombinedAttendeeList(
         c.checkInTime,
         c.checkOutTime
       );
+      const durationMins = calcDuration?.minutes || c.durationMinutes;
+      const durationDisp = calcDuration?.display || c.durationDisplay;
+      const travelMins = c.travelMinutes ?? 0;
+      const comp = durationMins !== undefined
+        ? calculateCompTime(durationMins, travelMins)
+        : undefined;
 
       list.push({
         id: c.id,
@@ -237,8 +277,12 @@ export function buildCombinedAttendeeList(
         hrVerifiedAt: c.hrVerifiedAt,
         checkOutTime: c.checkOutTime,
         checkOutSignatureDataUrl: c.checkOutSignatureDataUrl,
-        durationMinutes: calcDuration?.minutes || c.durationMinutes,
-        durationDisplay: calcDuration?.display || c.durationDisplay
+        durationMinutes: durationMins,
+        durationDisplay: durationDisp,
+        travelMinutes: travelMins,
+        travelDisplay: travelMins > 0 ? formatMinutesDisplay(travelMins) : '0分鐘',
+        compTimeMinutes: comp?.compMinutes,
+        compTimeDisplay: comp?.compDisplay
       });
     }
   });

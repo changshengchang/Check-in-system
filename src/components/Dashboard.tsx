@@ -31,7 +31,9 @@ import {
   Plus,
   LogOut,
   Lock,
-  Hourglass
+  Hourglass,
+  Award,
+  Car
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -44,6 +46,7 @@ interface DashboardProps {
   onDeleteRosterParticipant: (id: string) => void;
   onManualCheckIn: (attendee: CombinedAttendeeView) => void;
   onManualCheckOut: (attendeeId: string) => void;
+  onUpdateTravelTime?: (attendeeId: string, minutes: number) => void;
   onRemoveCheckIn: (checkInId: string) => void;
   onResetAllCheckIns: () => void;
   onToggleHrVerify: (attendeeId: string) => void;
@@ -62,6 +65,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onDeleteRosterParticipant,
   onManualCheckIn,
   onManualCheckOut,
+  onUpdateTravelTime,
   onRemoveCheckIn,
   onResetAllCheckIns,
   onToggleHrVerify,
@@ -554,6 +558,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       <th className="py-3 px-3 text-center">報到時間</th>
                       <th className="py-3 px-3 text-center">簽退時間</th>
                       <th className="py-3 px-3 text-center">參加時間(計算)</th>
+                      <th className="py-3 px-3 text-center">路途時間</th>
+                      <th className="py-3 px-3 text-center bg-indigo-50/50">核予補休時間</th>
                       <th className="py-3 px-3 text-center">手寫簽名</th>
                       <th className="py-3 px-3 text-center">人事覆核</th>
                       <th className="py-3 px-3 text-center">承辦人操作</th>
@@ -562,7 +568,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <tbody className="divide-y divide-slate-100">
                     {filteredAttendees.length === 0 ? (
                       <tr>
-                        <td colSpan={11} className="py-12 text-center text-slate-400">
+                        <td colSpan={13} className="py-12 text-center text-slate-400">
                           <Users className="w-8 h-8 mx-auto text-slate-300 mb-2" />
                           <p className="text-sm">查無符合條件之人員資料</p>
                           <p className="text-xs text-slate-400 mt-0.5">請確認搜尋關鍵字或篩選設定</p>
@@ -663,6 +669,55 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                 </span>
                               ) : isChecked ? (
                                 <span className="text-slate-400 italic text-[11px]">進行中</span>
+                              ) : (
+                                <span className="text-slate-300">—</span>
+                              )}
+                            </td>
+
+                            {/* Travel Time (路途時間) */}
+                            <td className="py-3 px-3 text-center">
+                              {isChecked ? (
+                                <div className="inline-flex items-center gap-1 justify-center">
+                                  <span className="font-mono text-[11px] text-slate-700 font-medium">
+                                    {attendee.travelDisplay || '0分鐘'}
+                                  </span>
+                                  {onUpdateTravelTime && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const input = prompt(`請輸入「${attendee.name}」之公務路途時間 (分鐘數)：`, String(attendee.travelMinutes ?? 60));
+                                        if (input !== null) {
+                                          const parsed = parseInt(input, 10);
+                                          if (!isNaN(parsed) && parsed >= 0) {
+                                            onUpdateTravelTime(attendee.id, parsed);
+                                          }
+                                        }
+                                      }}
+                                      className="text-[10px] text-blue-600 hover:text-blue-800 bg-blue-50 px-1 py-0.5 rounded hover:bg-blue-100 transition-colors cursor-pointer"
+                                      title="點擊修改此學員之路途時間"
+                                    >
+                                      設
+                                    </button>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-slate-300">—</span>
+                              )}
+                            </td>
+
+                            {/* Approved Comp Time (核予補休時間 ＝ 參加時間 ＋ 路途時間) */}
+                            <td className="py-3 px-3 text-center">
+                              {attendee.compTimeDisplay ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-black bg-indigo-100 text-indigo-900 border border-indigo-300 shadow-2xs">
+                                  <Award className="w-3.5 h-3.5 text-indigo-700" />
+                                  <span>{attendee.compTimeDisplay}</span>
+                                </span>
+                              ) : attendee.durationDisplay ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700">
+                                  {attendee.durationDisplay}
+                                </span>
+                              ) : isChecked ? (
+                                <span className="text-slate-400 italic text-[11px]">研習中</span>
                               ) : (
                                 <span className="text-slate-300">—</span>
                               )}

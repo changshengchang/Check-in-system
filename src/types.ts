@@ -6,6 +6,7 @@ export interface EventInfo {
   location: string;
   organizer: string;
   notes: string;
+  defaultTravelMinutes?: number; // 預設路途時間 (分鐘，例如 60 分鐘)
 }
 
 export interface RegisteredParticipant {
@@ -16,6 +17,7 @@ export interface RegisteredParticipant {
   phone?: string;
   email?: string;
   registeredAt?: string;
+  travelMinutes?: number; // 個別設定路途時間 (分鐘)
 }
 
 export interface CheckInRecord {
@@ -34,6 +36,10 @@ export interface CheckInRecord {
   checkOutSignatureDataUrl?: string; // Base64 image (簽退手寫簽署)
   durationMinutes?: number; // 參加時間 (分鐘數)
   durationDisplay?: string; // 參加時間文字 (例如: 2小時15分)
+  travelMinutes?: number; // 路途時間 (分鐘數)
+  travelDisplay?: string; // 路途時間文字 (例如: 1小時 或 60分鐘)
+  compTimeMinutes?: number; // 核予補休時間 (參加時間 + 路途時間，單位分鐘)
+  compTimeDisplay?: string; // 核予補休時間文字 (例如: 3小時15分)
 }
 
 export type AttendeeStatus = 'CHECKED_IN' | 'NOT_CHECKED_IN' | 'WALK_IN';
@@ -55,4 +61,8 @@ export interface CombinedAttendeeView {
   checkOutSignatureDataUrl?: string; // 簽退手寫簽名
   durationMinutes?: number; // 參加時間 (分鐘數)
   durationDisplay?: string; // 參加時間文字 (例如: 2小時15分)
+  travelMinutes?: number; // 路途時間 (分鐘數)
+  travelDisplay?: string; // 路途時間文字
+  compTimeMinutes?: number; // 核予補休時間 (分鐘數)
+  compTimeDisplay?: string; // 核予補休時間文字 (參加時間 + 路途時間)
 }

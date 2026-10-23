@@ -16,7 +16,9 @@ import {
   loadCheckIns,
   saveCheckIns,
   buildCombinedAttendeeList,
-  calculateParticipationDuration
+  calculateParticipationDuration,
+  calculateCompTime,
+  formatMinutesDisplay
 } from './utils/storage';
 import {
   getDeviceId,
@@ -342,10 +344,20 @@ export default function App() {
     checkOutTime: string,
     signatureDataUrl: string,
     durationMinutes: number,
-    durationDisplay: string
+    durationDisplay: string,
+    travelMinutes?: number,
+    travelDisplay?: string,
+    compTimeMinutes?: number,
+    compTimeDisplay?: string
   ) => {
     const existingCheckIn = checkIns.find(c => c.id === checkInId);
     const participantName = existingCheckIn ? existingCheckIn.name : '學員';
+
+    const actualTravelMinutes = typeof travelMinutes === 'number' ? travelMinutes : (existingCheckIn?.travelMinutes ?? eventInfo.defaultTravelMinutes ?? 60);
+    const actualTravelDisplay = travelDisplay || formatMinutesDisplay(actualTravelMinutes);
+    const compResult = calculateCompTime(durationMinutes, actualTravelMinutes);
+    const actualCompTime = typeof compTimeMinutes === 'number' ? compTimeMinutes : compResult.compMinutes;
+    const actualCompDisplay = compTimeDisplay || compResult.compDisplay;
 
     executeMutationAndBroadcast(`學員簽退: ${participantName} (${durationDisplay})`, base => {
       const nextCheckIns = base.checkIns.map(c => {
@@ -355,7 +367,11 @@ export default function App() {
             checkOutTime,
             checkOutSignatureDataUrl: signatureDataUrl,
             durationMinutes,
-            durationDisplay
+            durationDisplay,
+            travelMinutes: actualTravelMinutes,
+            travelDisplay: actualTravelDisplay,
+            compTimeMinutes: actualCompTime,
+            compTimeDisplay: actualCompDisplay
           };
         }
         return c;
@@ -383,6 +399,14 @@ export default function App() {
 
     const checkOutTime = new Date().toISOString();
     const duration = calculateParticipationDuration(checkInRecord.checkInTime, checkOutTime);
+    const durationMinutes = duration?.minutes ?? 0;
+    const durationDisplay = duration?.display ?? '0分鐘';
+
+    const travelMins = checkInRecord.travelMinutes ?? target.travelMinutes ?? eventInfo.defaultTravelMinutes ?? 60;
+    const travelDisp = formatMinutesDisplay(travelMins);
+    const compResult = calculateCompTime(durationMinutes, travelMins);
+    const compMins = compResult.compMinutes;
+    const compDisp = compResult.compDisplay;
 
     // Create a virtual stamp for manual sign-out
     const canvas = document.createElement('canvas');
@@ -411,8 +435,12 @@ export default function App() {
             ...c,
             checkOutTime,
             checkOutSignatureDataUrl: stampDataUrl,
-            durationMinutes: duration?.minutes ?? 0,
-            durationDisplay: duration?.display ?? '0分鐘',
+            durationMinutes,
+            durationDisplay,
+            travelMinutes: travelMins,
+            travelDisplay: travelDisp,
+            compTimeMinutes: compMins,
+            compTimeDisplay: compDisp,
             notes: c.notes ? `${c.notes} / 承辦人協助簽退` : '承辦人協助簽退'
           };
         }
@@ -422,6 +450,49 @@ export default function App() {
       return {
         ...base,
         checkIns: nextCheckIns
+      };
+    });
+  };
+
+  // 6d. Update travel time for attendee directly
+  const handleUpdateTravelTime = (attendeeId: string, minutes: number) => {
+    const targetAttendee = combinedAttendees.find(a => a.id === attendeeId);
+    const targetName = targetAttendee ? targetAttendee.name : '學員';
+
+    executeMutationAndBroadcast(`更新路途時間: ${targetName} (${minutes}分鐘)`, base => {
+      const nextCheckIns = base.checkIns.map(c => {
+        const isMatch =
+          c.id === attendeeId ||
+          c.participantId === attendeeId ||
+          (targetAttendee && c.name.trim().toLowerCase() === targetAttendee.name.trim().toLowerCase());
+
+        if (isMatch) {
+          const compResult = calculateCompTime(c.durationMinutes ?? 0, minutes);
+          return {
+            ...c,
+            travelMinutes: minutes,
+            travelDisplay: formatMinutesDisplay(minutes),
+            compTimeMinutes: compResult.compMinutes,
+            compTimeDisplay: compResult.compDisplay
+          };
+        }
+        return c;
+      });
+
+      const nextRoster = base.roster.map(r => {
+        if (r.id === attendeeId || (targetAttendee && r.name.trim().toLowerCase() === targetAttendee.name.trim().toLowerCase())) {
+          return {
+            ...r,
+            travelMinutes: minutes
+          };
+        }
+        return r;
+      });
+
+      return {
+        ...base,
+        checkIns: nextCheckIns,
+        roster: nextRoster
       };
     });
   };
@@ -557,6 +628,7 @@ export default function App() {
             attendees={combinedAttendees}
             existingCheckIns={checkIns}
             onCheckOutSuccess={handleCheckOutSuccess}
+            onToggleHrVerify={handleToggleHrVerify}
             onNavigateToCheckIn={() => handleRequestSwitchMode('checkin')}
             onNavigateToDashboard={() => handleRequestSwitchMode('dashboard')}
           />
@@ -571,6 +643,7 @@ export default function App() {
             onDeleteRosterParticipant={handleDeleteRosterParticipant}
             onManualCheckIn={handleManualCheckIn}
             onManualCheckOut={handleManualCheckOut}
+            onUpdateTravelTime={handleUpdateTravelTime}
             onRemoveCheckIn={handleRemoveCheckIn}
             onResetAllCheckIns={handleResetAllCheckIns}
             onToggleHrVerify={handleToggleHrVerify}

@@ -114,6 +114,9 @@ export function exportToExcel(attendees: CombinedAttendeeView[], eventInfo: Even
     '簽退時間': item.checkOutTime ? new Date(item.checkOutTime).toLocaleString('zh-TW', { hour12: false }) : (item.checkInTime ? '未簽退' : '—'),
     '參加時間(計算)': item.durationDisplay || (item.checkInTime ? '研習中(未簽退)' : '—'),
     '參加時間(分鐘)': item.durationMinutes ?? '—',
+    '路途時間': item.travelDisplay || '0分鐘',
+    '核予補休時間': item.compTimeDisplay || (item.durationDisplay ? item.durationDisplay : '—'),
+    '核予補休總分鐘數': item.compTimeMinutes ?? '—',
     '手寫簽到狀態': item.signatureDataUrl ? '已簽名' : '未簽名',
     '手寫簽退狀態': item.checkOutSignatureDataUrl ? '已簽退' : '未簽退',
     '人事覆核': item.hrVerified ? '已覆核' : '未覆核',
@@ -132,7 +135,10 @@ export function exportToExcel(attendees: CombinedAttendeeView[], eventInfo: Even
     { wch: 22 }, // 簽到時間
     { wch: 22 }, // 簽退時間
     { wch: 18 }, // 參加時間
-    { wch: 15 }, // 分鐘數
+    { wch: 15 }, // 參加分鐘數
+    { wch: 14 }, // 路途時間
+    { wch: 18 }, // 核予補休時間
+    { wch: 18 }, // 核予補休分鐘數
     { wch: 15 }, // 簽到簽名
     { wch: 15 }, // 簽退簽名
     { wch: 14 }, // 人事覆核
@@ -140,10 +146,10 @@ export function exportToExcel(attendees: CombinedAttendeeView[], eventInfo: Even
   ];
 
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, '簽到與簽退清冊');
+  XLSX.utils.book_append_sheet(workbook, worksheet, '簽到簽退與補休清冊');
 
   const safeEventName = eventInfo.title.replace(/[\\/*?:"<>|]/g, '_');
-  const filename = `${safeEventName}_報到與簽退名冊_${formatDateForFilename(new Date())}.xlsx`;
+  const filename = `${safeEventName}_報到簽退與補休時數清冊_${formatDateForFilename(new Date())}.xlsx`;
   XLSX.writeFile(workbook, filename);
 }
 
@@ -157,7 +163,24 @@ export function exportToCsv(attendees: CombinedAttendeeView[], eventInfo: EventI
     WALK_IN: '現場臨時報到'
   };
 
-  const headers = ['項次', '姓名', '職稱', '部門/單位', '報到狀態', '簽到時間', '簽退時間', '參加時間', '參加分鐘數', '手寫簽到狀態', '手寫簽退狀態', '人事覆核', '名單類別'];
+  const headers = [
+    '項次',
+    '姓名',
+    '職稱',
+    '部門/單位',
+    '報到狀態',
+    '簽到時間',
+    '簽退時間',
+    '參加時間(計算)',
+    '參加時間(分鐘)',
+    '路途時間',
+    '核予補休時間',
+    '核予補休總分鐘數',
+    '手寫簽到狀態',
+    '手寫簽退狀態',
+    '人事覆核',
+    '名單類別'
+  ];
   const rows = attendees.map((item, idx) => [
     idx + 1,
     `"${item.name.replace(/"/g, '""')}"`,
@@ -168,6 +191,9 @@ export function exportToCsv(attendees: CombinedAttendeeView[], eventInfo: EventI
     `"${item.checkOutTime ? new Date(item.checkOutTime).toLocaleString('zh-TW', { hour12: false }) : (item.checkInTime ? '未簽退' : '—')}"`,
     `"${(item.durationDisplay || (item.checkInTime ? '研習中(未簽退)' : '—')).replace(/"/g, '""')}"`,
     `"${item.durationMinutes ?? '—'}"`,
+    `"${(item.travelDisplay || '0分鐘').replace(/"/g, '""')}"`,
+    `"${(item.compTimeDisplay || (item.durationDisplay ? item.durationDisplay : '—')).replace(/"/g, '""')}"`,
+    `"${item.compTimeMinutes ?? '—'}"`,
     `"${item.signatureDataUrl ? '已簽名' : '未簽名'}"`,
     `"${item.checkOutSignatureDataUrl ? '已簽退' : '未簽退'}"`,
     `"${item.hrVerified ? '已覆核' : '未覆核'}"`,
