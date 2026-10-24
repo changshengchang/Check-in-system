@@ -59,7 +59,7 @@ export default function App() {
   });
   const [showAuthModal, setShowAuthModal] = useState(false);
 
-  // Core Sync Engine: Apply mutation on the freshest remote base and broadcast to cloud
+  // Core Sync Engine: Apply mutation on local state immediately, then sync with cloud
   const executeMutationAndBroadcast = async (
     actionDesc: string,
     mutation: (base: {
@@ -74,13 +74,23 @@ export default function App() {
   ) => {
     isBroadcastingRef.current = true;
     try {
+      // 0. Immediate optimistic update: instant UI response with 0ms delay
+      const optimisticBase = { eventInfo, roster, checkIns };
+      const optimisticNext = mutation(optimisticBase);
+      setEventInfo(optimisticNext.eventInfo);
+      setRoster(optimisticNext.roster);
+      setCheckIns(optimisticNext.checkIns);
+      saveEventInfo(optimisticNext.eventInfo);
+      saveRoster(optimisticNext.roster);
+      saveCheckIns(optimisticNext.checkIns);
+
       const roomId = getCloudRoomId();
 
       // 1. Fetch freshest cloud state first so changes from the other device are never lost
       const freshCloud = await fetchFromCloudRelay(roomId);
-      const baseRoster = freshCloud && Array.isArray(freshCloud.roster) && freshCloud.roster.length > 0 ? freshCloud.roster : roster;
-      const baseCheckIns = freshCloud && Array.isArray(freshCloud.checkIns) ? freshCloud.checkIns : checkIns;
-      const baseEvent = freshCloud && freshCloud.eventInfo ? freshCloud.eventInfo : eventInfo;
+      const baseRoster = freshCloud && Array.isArray(freshCloud.roster) && freshCloud.roster.length > 0 ? freshCloud.roster : optimisticNext.roster;
+      const baseCheckIns = freshCloud && Array.isArray(freshCloud.checkIns) ? freshCloud.checkIns : optimisticNext.checkIns;
+      const baseEvent = freshCloud && freshCloud.eventInfo ? freshCloud.eventInfo : optimisticNext.eventInfo;
 
       const base = {
         eventInfo: baseEvent,
@@ -424,7 +434,6 @@ export default function App() {
       c => c.id === attendeeId || c.participantId === attendeeId || c.name.trim().toLowerCase() === target.name.trim().toLowerCase()
     );
     if (!checkInRecord) {
-      alert('該學員尚未完成報到，無法進行簽退');
       return;
     }
 

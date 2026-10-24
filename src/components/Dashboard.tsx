@@ -25,6 +25,7 @@ import {
   Copy,
   Check,
   AlertTriangle,
+  AlertCircle,
   MinusCircle,
   Clock,
   Sparkles,
@@ -94,6 +95,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [copiedMissing, setCopiedMissing] = useState(false);
   const [showAddAttendeeModal, setShowAddAttendeeModal] = useState(false);
   const [newAttendee, setNewAttendee] = useState({ name: '', title: '', department: '', phone: '' });
+
+  // In-app Confirmation Modals (Replaces native confirm to guarantee 100% execution in iframes)
+  const [confirmResetModalOpen, setConfirmResetModalOpen] = useState(false);
+  const [attendeeToCancel, setAttendeeToCancel] = useState<{
+    id: string;
+    checkInId?: string;
+    name: string;
+    hasCheckOut?: boolean;
+  } | null>(null);
 
   // Organizer Edit Event Info & Unified Travel Time modal state
   const [isEditingEvent, setIsEditingEvent] = useState(false);
@@ -1014,18 +1024,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      if (confirm(`確定要取消 ${attendee.name} 的報到紀錄嗎？`)) {
-                                        const found = checkIns.find(
-                                          c => c.id === attendee.checkInId ||
-                                               c.id === attendee.id ||
-                                               c.participantId === attendee.id ||
-                                               (attendee.name && c.name.trim().toLowerCase() === attendee.name.trim().toLowerCase())
-                                        );
-                                        onRemoveCheckIn(attendee.id, found?.id, attendee.name);
-                                      }
+                                      const found = checkIns.find(
+                                        c => c.id === attendee.checkInId ||
+                                             c.id === attendee.id ||
+                                             c.participantId === attendee.id ||
+                                             (attendee.name && c.name.trim().toLowerCase() === attendee.name.trim().toLowerCase())
+                                      );
+                                      setAttendeeToCancel({
+                                        id: attendee.id,
+                                        checkInId: found?.id || attendee.checkInId,
+                                        name: attendee.name,
+                                        hasCheckOut: Boolean(attendee.checkOutTime)
+                                      });
                                     }}
                                     className="text-[11px] text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 transition-colors cursor-pointer"
-                                    title="取消報到狀態並跨裝置同步"
+                                    title="取消報到狀態（包含簽到與簽退資料）"
                                   >
                                     取消報到
                                   </button>
@@ -1058,12 +1071,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => {
-                    if (confirm('請確定是否要清除,清除後資料無法復原')) {
-                      onResetAllCheckIns();
-                    }
-                  }}
+                  onClick={() => setConfirmResetModalOpen(true)}
                   className="text-xs text-slate-400 hover:text-rose-600 flex items-center gap-1 transition-colors cursor-pointer"
+                  title="清除全體學員之簽到與簽退紀錄"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>清空所有簽到紀錄</span>
@@ -1510,6 +1520,123 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Cancel Single Attendee Check-in/Check-out Modal */}
+      {attendeeToCancel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden p-6 sm:p-7">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  取消報到確認
+                </h3>
+                <p className="text-xs text-slate-500">
+                  學員簽到與簽退資料復原
+                </p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-800 mb-3">
+              確定要取消 <span className="font-bold text-slate-900 text-base">「{attendeeToCancel.name}」</span> 的報到紀錄嗎？
+            </p>
+
+            <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs mb-6 space-y-1">
+              <p className="font-semibold">
+                {attendeeToCancel.hasCheckOut
+                  ? '注意：該學員目前已完成簽退。'
+                  : '注意：該學員目前為已報到狀態。'}
+              </p>
+              <p className="text-[11px] text-amber-800 leading-relaxed">
+                確定取消後，將會<strong>刪除該學員之簽到與簽退時間、手寫簽章、補休時數及覆核狀態</strong>，回復為「未完成報到」狀態。
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setAttendeeToCancel(null)}
+                className="px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
+              >
+                保留紀錄 (返回)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const target = attendeeToCancel;
+                  setAttendeeToCancel(null);
+                  onRemoveCheckIn(target.id, target.checkInId, target.name);
+                }}
+                className="px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-600/20 flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>確定取消報到</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset All Check-ins Confirmation Modal */}
+      {confirmResetModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden p-6 sm:p-7">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  清空所有簽到及簽退紀錄
+                </h3>
+                <p className="text-xs text-slate-500">
+                  承辦人重要資料清除確認
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl text-rose-900 font-bold text-sm text-center mb-4 leading-relaxed">
+              請確定是否要清除,清除後資料無法復原
+            </div>
+
+            <div className="text-xs text-slate-600 space-y-2 mb-6 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+              <p className="font-semibold text-slate-800">
+                執行清空後將會產生以下變更：
+              </p>
+              <ul className="list-disc pl-4 space-y-1 text-slate-600 text-[11px]">
+                <li>全體學員之<strong>簽到時間</strong>、<strong>簽退時間</strong>與<strong>手寫電子簽章</strong>全部刪除。</li>
+                <li>所有學員的研習參加時數、核予補休時間歸零。</li>
+                <li>簽到覆核與簽退覆核狀態均一併重設。</li>
+                <li>全體人員即刻<strong>回復為「未完成報到」狀態</strong>。</li>
+                <li>預先報名的名冊人員（{totalRosterCount}人）名單將完整保留，不受影響。</li>
+              </ul>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setConfirmResetModalOpen(false)}
+                className="px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
+              >
+                取消返回
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmResetModalOpen(false);
+                  onResetAllCheckIns();
+                }}
+                className="px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-600/20 flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>確定清除所有紀錄</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
