@@ -48,7 +48,7 @@ function statusFromMetadata(m: SnapshotMetadata): SyncStatus {
 
 function describeSyncError(err: unknown): string {
   const code = (err as { code?: string })?.code || '';
-  if (code === 'permission-denied') return '雲端資料庫拒絕存取，請確認 Firestore 安全規則已設定';
+  if (code === 'permission-denied') return '雲端拒絕這次修改：該紀錄可能已被其他裝置取消或刪除，請重新整理畫面後再試';
   if (code === 'unavailable') return '目前無法連上雲端，請檢查網路後再試一次';
   if (code === 'not-found') return '找不到這筆紀錄，可能已被其他裝置刪除';
   return `同步發生錯誤${code ? ` (${code})` : ''}，請稍後再試`;

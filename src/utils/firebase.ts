@@ -32,8 +32,13 @@ const firebaseConfig = {
   appId: env.VITE_FIREBASE_APP_ID || '1:621258465185:web:f832dd9809134f21e9f5e0'
 };
 
-/** 同一個 Firebase 專案內的活動代號，所有裝置必須相同才會互相同步 */
-export const EVENT_ID: string = env.VITE_FIREBASE_EVENT_ID || 'sanyi-main';
+/**
+ * 同一個 Firebase 專案內的活動代號，所有裝置必須相同才會互相同步。
+ * 正式網站用 sanyi-main；Vercel 預覽網址與本機開發用 sanyi-preview，
+ * 測試時產生的資料不會混進正式活動。(VITE_VERCEL_ENV 由 Vercel 自動提供)
+ */
+const isPreview = env.DEV || env.VITE_VERCEL_ENV === 'preview' || env.VITE_VERCEL_ENV === 'development';
+export const EVENT_ID: string = env.VITE_FIREBASE_EVENT_ID || (isPreview ? 'sanyi-preview' : 'sanyi-main');
 
 const app = initializeApp(firebaseConfig);
 
