@@ -266,7 +266,12 @@ export default function App() {
   };
 
   // 3. Handle roster Excel/CSV import (synced based on latest write)
-  const handleImportRoster = (newParticipants: RegisteredParticipant[], mode: 'replace' | 'append') => {
+  const handleImportRoster = (
+    newParticipants: RegisteredParticipant[],
+    mode: 'replace' | 'append',
+    selectedColumns?: string[],
+    allColumns?: string[]
+  ) => {
     executeMutationAndBroadcast(`匯入名冊 (${newParticipants.length}人)`, base => {
       let nextRoster: RegisteredParticipant[];
       if (mode === 'replace') {
@@ -276,8 +281,14 @@ export default function App() {
         const filteredNew = newParticipants.filter(p => !existingNames.has(p.name.trim().toLowerCase()));
         nextRoster = [...base.roster, ...filteredNew];
       }
+      const nextEventInfo: EventInfo = {
+        ...base.eventInfo,
+        ...(selectedColumns && selectedColumns.length > 0 ? { completionDisplayFields: selectedColumns } : {}),
+        ...(allColumns && allColumns.length > 0 ? { availableRosterColumns: allColumns } : {})
+      };
       return {
         ...base,
+        eventInfo: nextEventInfo,
         roster: nextRoster
       };
     });
@@ -307,7 +318,7 @@ export default function App() {
   };
 
   // 6. Manual check-in performed by organizer (synced based on latest write)
-  const handleManualCheckIn = (attendee: { id: string; name: string; title: string; department?: string }) => {
+  const handleManualCheckIn = (attendee: { id: string; name: string; title: string; department?: string; phone?: string; email?: string; customFields?: Record<string, string> }) => {
     const canvas = document.createElement('canvas');
     canvas.width = 240;
     canvas.height = 80;
@@ -333,6 +344,9 @@ export default function App() {
       name: attendee.name,
       title: attendee.title,
       department: attendee.department,
+      phone: attendee.phone,
+      email: attendee.email,
+      customFields: attendee.customFields,
       checkInTime: new Date().toISOString(),
       signatureDataUrl: stampDataUrl,
       isWalkIn: false,
@@ -342,7 +356,7 @@ export default function App() {
     handleCheckInSuccess(newRecord);
   };
 
-  // 6b. Check-out success submission from CheckOutForm
+  // 6b. Check-out success submission from CheckOutForm (支援參加時間 + 路途時間 - 扣除時間)
   const handleCheckOutSuccess = (
     checkInId: string,
     checkOutTime: string,
@@ -352,14 +366,24 @@ export default function App() {
     travelMinutes?: number,
     travelDisplay?: string,
     compTimeMinutes?: number,
-    compTimeDisplay?: string
+    compTimeDisplay?: string,
+    deductionMinutes?: number,
+    deductionDisplay?: string,
+    deductionReason?: string
   ) => {
     const existingCheckIn = checkIns.find(c => c.id === checkInId);
     const participantName = existingCheckIn ? existingCheckIn.name : '學員';
 
-    const actualTravelMinutes = typeof travelMinutes === 'number' ? travelMinutes : (existingCheckIn?.travelMinutes ?? eventInfo.defaultTravelMinutes ?? 60);
-    const actualTravelDisplay = travelDisplay || formatMinutesDisplay(actualTravelMinutes);
-    const compResult = calculateCompTime(durationMinutes, actualTravelMinutes);
+    const useTravel = eventInfo.showTravelTime !== false;
+    const actualTravelMinutes = useTravel ? (typeof travelMinutes === 'number' ? travelMinutes : (existingCheckIn?.travelMinutes ?? eventInfo.defaultTravelMinutes ?? 60)) : 0;
+    const actualTravelDisplay = useTravel ? (travelDisplay || formatMinutesDisplay(actualTravelMinutes)) : undefined;
+
+    const useDeduction = !!eventInfo.showDeductionTime;
+    const actualDeductionMinutes = useDeduction ? (typeof deductionMinutes === 'number' ? deductionMinutes : (existingCheckIn?.deductionMinutes ?? eventInfo.defaultDeductionMinutes ?? 60)) : 0;
+    const actualDeductionDisplay = useDeduction ? (deductionDisplay || formatMinutesDisplay(actualDeductionMinutes)) : undefined;
+    const actualDeductionReason = useDeduction ? (deductionReason || eventInfo.deductionReason || '午休用餐休息時間不計入補休') : undefined;
+
+    const compResult = calculateCompTime(durationMinutes, actualTravelMinutes, actualDeductionMinutes);
     const actualCompTime = typeof compTimeMinutes === 'number' ? compTimeMinutes : compResult.compMinutes;
     const actualCompDisplay = compTimeDisplay || compResult.compDisplay;
 
@@ -374,6 +398,9 @@ export default function App() {
             durationDisplay,
             travelMinutes: actualTravelMinutes,
             travelDisplay: actualTravelDisplay,
+            deductionMinutes: actualDeductionMinutes,
+            deductionDisplay: actualDeductionDisplay,
+            deductionReason: actualDeductionReason,
             compTimeMinutes: actualCompTime,
             compTimeDisplay: actualCompDisplay
           };
@@ -388,7 +415,7 @@ export default function App() {
     });
   };
 
-  // 6c. Manual check-out performed by organizer from Dashboard
+  // 6c. Manual check-out performed by organizer from Dashboard (參加時間 + 路途時間 - 扣除時間)
   const handleManualCheckOut = (attendeeId: string) => {
     const target = combinedAttendees.find(a => a.id === attendeeId);
     if (!target) return;
@@ -406,9 +433,16 @@ export default function App() {
     const durationMinutes = duration?.minutes ?? 0;
     const durationDisplay = duration?.display ?? '0分鐘';
 
-    const travelMins = checkInRecord.travelMinutes ?? target.travelMinutes ?? eventInfo.defaultTravelMinutes ?? 60;
-    const travelDisp = formatMinutesDisplay(travelMins);
-    const compResult = calculateCompTime(durationMinutes, travelMins);
+    const useTravel = eventInfo.showTravelTime !== false;
+    const travelMins = useTravel ? (checkInRecord.travelMinutes ?? target.travelMinutes ?? eventInfo.defaultTravelMinutes ?? 60) : 0;
+    const travelDisp = useTravel ? formatMinutesDisplay(travelMins) : undefined;
+
+    const useDeduction = !!eventInfo.showDeductionTime;
+    const deductionMins = useDeduction ? (checkInRecord.deductionMinutes ?? eventInfo.defaultDeductionMinutes ?? 60) : 0;
+    const deductionDisp = useDeduction ? formatMinutesDisplay(deductionMins) : undefined;
+    const deductionReason = useDeduction ? (checkInRecord.deductionReason ?? eventInfo.deductionReason ?? '午休用餐休息時間不計入補休') : undefined;
+
+    const compResult = calculateCompTime(durationMinutes, travelMins, deductionMins);
     const compMins = compResult.compMinutes;
     const compDisp = compResult.compDisplay;
 
@@ -443,6 +477,9 @@ export default function App() {
             durationDisplay,
             travelMinutes: travelMins,
             travelDisplay: travelDisp,
+            deductionMinutes: deductionMins,
+            deductionDisplay: deductionDisp,
+            deductionReason: deductionReason,
             compTimeMinutes: compMins,
             compTimeDisplay: compDisp,
             notes: c.notes ? `${c.notes} / 承辦人協助簽退` : '承辦人協助簽退'
@@ -613,8 +650,8 @@ export default function App() {
     });
   };
 
-  // Combined real-time attendee comparison list (傳入統一路途時間)
-  const combinedAttendees = buildCombinedAttendeeList(roster, checkIns, eventInfo.defaultTravelMinutes ?? 60);
+  // Combined real-time attendee comparison list (傳入 eventInfo 完整包含路途時間與扣除時間設定)
+  const combinedAttendees = buildCombinedAttendeeList(roster, checkIns, eventInfo);
 
   const checkedInCount = combinedAttendees.filter(
     a => a.status === 'CHECKED_IN' || a.status === 'WALK_IN'

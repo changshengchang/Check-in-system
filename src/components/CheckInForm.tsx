@@ -154,6 +154,9 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
       name: trimmedName,
       title: title.trim() || (matchedParticipant ? matchedParticipant.title : (isWalkIn ? '現場報名人員' : '學員')),
       department: department.trim() || matchedParticipant?.department || undefined,
+      phone: matchedParticipant?.phone,
+      email: matchedParticipant?.email,
+      customFields: matchedParticipant?.customFields,
       checkInTime: now.toISOString(),
       signatureDataUrl,
       isWalkIn: !matchedParticipant,
@@ -502,6 +505,43 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
                   {recentCheckedIn.isWalkIn ? '現場追加報到' : '預先報名符合'}
                 </span>
               </div>
+
+              {/* Extra Roster Fields Selected by Organizer (User Request 1) */}
+              {(() => {
+                const selectedFields = eventInfo.completionDisplayFields || ['職稱', '部門', '電話'];
+                const extraList: { label: string; value: string }[] = [];
+
+                selectedFields.forEach(field => {
+                  const norm = field.trim().toLowerCase();
+                  if (norm === '姓名' || norm === 'name') return;
+                  if (norm === '職稱' || norm === '部門') return; // already rendered in top rows
+
+                  let val: string | undefined;
+                  if (recentCheckedIn.customFields && recentCheckedIn.customFields[field]) {
+                    val = recentCheckedIn.customFields[field];
+                  } else if (norm.includes('電話') || norm.includes('phone') || norm.includes('手機')) {
+                    val = recentCheckedIn.phone || recentCheckedIn.customFields?.['電話'] || recentCheckedIn.customFields?.['聯絡電話'];
+                  } else if (norm.includes('信箱') || norm.includes('email') || norm.includes('郵件')) {
+                    val = recentCheckedIn.email || recentCheckedIn.customFields?.['信箱'] || recentCheckedIn.customFields?.['電子信箱'];
+                  } else if (norm.includes('備註') || norm.includes('note')) {
+                    val = recentCheckedIn.notes || recentCheckedIn.customFields?.['備註'];
+                  } else if (recentCheckedIn.customFields) {
+                    const matchingKey = Object.keys(recentCheckedIn.customFields).find(k => k.trim().toLowerCase() === norm);
+                    if (matchingKey) val = recentCheckedIn.customFields[matchingKey];
+                  }
+
+                  if (val && val.trim() !== '') {
+                    extraList.push({ label: field, value: val.trim() });
+                  }
+                });
+
+                return extraList.map(({ label, value }) => (
+                  <div key={label} className="flex justify-between items-center py-1 border-b border-slate-200">
+                    <span className="text-slate-500 font-medium">{label}</span>
+                    <span className="font-semibold text-slate-800 text-right">{value}</span>
+                  </div>
+                ));
+              })()}
 
               {/* Signature snapshot thumbnail */}
               {recentCheckedIn.signatureDataUrl && (

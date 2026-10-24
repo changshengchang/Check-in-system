@@ -12,7 +12,13 @@ export const DEFAULT_EVENT_INFO: EventInfo = {
   location: '苗栗縣三義鄉公所 3F 大禮堂會議室',
   organizer: '苗栗縣三義鄉公所 (人事室 / 社會民政課)',
   notes: '請於入場時完成手寫簽到，培訓活動結束前請至「學員簽退端」完成手寫簽退以核算參加時數',
-  defaultTravelMinutes: 60
+  showTravelTime: true,
+  defaultTravelMinutes: 60,
+  showDeductionTime: false,
+  defaultDeductionMinutes: 60,
+  deductionReason: '午休用餐休息時間不計入補休',
+  completionDisplayFields: ['職稱', '部門', '電話'],
+  availableRosterColumns: ['姓名', '職稱', '部門', '電話', '電子信箱']
 };
 
 /**
@@ -48,13 +54,15 @@ export function calculateParticipationDuration(
 }
 
 /**
- * Calculates Comp Time (核予補休時間): "參加時間(計算)" 加上 "路途時間"
+ * Calculates Comp Time (核予補休時間):
+ * 定義: "參加時間" + "路途時間" - "扣除時間"
  */
 export function calculateCompTime(
   durationMinutes: number = 0,
-  travelMinutes: number = 0
+  travelMinutes: number = 0,
+  deductionMinutes: number = 0
 ): { compMinutes: number; compDisplay: string } {
-  const compMinutes = Math.max(0, (durationMinutes || 0) + (travelMinutes || 0));
+  const compMinutes = Math.max(0, (durationMinutes || 0) + (travelMinutes || 0) - (deductionMinutes || 0));
   return {
     compMinutes,
     compDisplay: formatMinutesDisplay(compMinutes)
@@ -168,8 +176,18 @@ export function saveCheckIns(checkIns: CheckInRecord[]) {
 export function buildCombinedAttendeeList(
   roster: RegisteredParticipant[],
   checkIns: CheckInRecord[],
-  unifiedTravelMinutes: number = 60
+  eventInfoOrTravelMinutes: EventInfo | number = 60
 ): CombinedAttendeeView[] {
+  const eventInfo: Partial<EventInfo> = typeof eventInfoOrTravelMinutes === 'object'
+    ? eventInfoOrTravelMinutes
+    : { defaultTravelMinutes: eventInfoOrTravelMinutes, showTravelTime: true, showDeductionTime: false };
+
+  const showTravel = eventInfo.showTravelTime !== false;
+  const unifiedTravelMinutes = showTravel ? (eventInfo.defaultTravelMinutes ?? 60) : 0;
+  const showDeduction = Boolean(eventInfo.showDeductionTime);
+  const unifiedDeductionMinutes = showDeduction ? (eventInfo.defaultDeductionMinutes ?? 0) : 0;
+  const deductionReason = eventInfo.deductionReason || '午休用餐休息時間不計入補休';
+
   const list: CombinedAttendeeView[] = [];
 
   // Map check-ins by participantId and by normalized name
@@ -202,6 +220,10 @@ export function buildCombinedAttendeeList(
       }
     }
 
+    const travelMins = unifiedTravelMinutes;
+    const deductionMins = unifiedDeductionMinutes;
+    const customFields = { ...(p.customFields || {}), ...(matchedCheckIn?.customFields || {}) };
+
     if (matchedCheckIn) {
       usedCheckInIds.add(matchedCheckIn.id);
       const calcDuration = calculateParticipationDuration(
@@ -211,10 +233,9 @@ export function buildCombinedAttendeeList(
       const durationMins = calcDuration?.minutes || matchedCheckIn.durationMinutes;
       const durationDisp = calcDuration?.display || matchedCheckIn.durationDisplay;
       
-      // 統一由承辦人設定之路途時間 (全體學員均相同)
-      const travelMins = unifiedTravelMinutes;
+      // 核予補休時間 ＝ 參加時間 ＋ 路途時間 － 扣除時間
       const comp = durationMins !== undefined
-        ? calculateCompTime(durationMins, travelMins)
+        ? calculateCompTime(durationMins, travelMins, deductionMins)
         : undefined;
 
       const isCheckInVerified = Boolean(matchedCheckIn.checkInHrVerified ?? matchedCheckIn.hrVerified);
@@ -226,6 +247,8 @@ export function buildCombinedAttendeeList(
         name: p.name,
         title: p.title,
         department: p.department,
+        phone: p.phone || matchedCheckIn.phone,
+        email: p.email || matchedCheckIn.email,
         status: 'CHECKED_IN',
         checkInTime: matchedCheckIn.checkInTime,
         signatureDataUrl: matchedCheckIn.signatureDataUrl,
@@ -243,23 +266,32 @@ export function buildCombinedAttendeeList(
         durationDisplay: durationDisp,
         travelMinutes: travelMins,
         travelDisplay: travelMins > 0 ? formatMinutesDisplay(travelMins) : '0分鐘',
+        deductionMinutes: deductionMins,
+        deductionDisplay: deductionMins > 0 ? formatMinutesDisplay(deductionMins) : '0分鐘',
+        deductionReason,
         compTimeMinutes: comp?.compMinutes,
-        compTimeDisplay: comp?.compDisplay
+        compTimeDisplay: comp?.compDisplay,
+        customFields
       });
     } else {
-      const travelMins = unifiedTravelMinutes;
       list.push({
         id: p.id,
         name: p.name,
         title: p.title,
         department: p.department,
+        phone: p.phone,
+        email: p.email,
         status: 'NOT_CHECKED_IN',
         isWalkIn: false,
         hrVerified: false,
         checkInHrVerified: false,
         checkOutHrVerified: false,
         travelMinutes: travelMins,
-        travelDisplay: travelMins > 0 ? formatMinutesDisplay(travelMins) : '0分鐘'
+        travelDisplay: travelMins > 0 ? formatMinutesDisplay(travelMins) : '0分鐘',
+        deductionMinutes: deductionMins,
+        deductionDisplay: deductionMins > 0 ? formatMinutesDisplay(deductionMins) : '0分鐘',
+        deductionReason,
+        customFields
       });
     }
   });
@@ -274,8 +306,9 @@ export function buildCombinedAttendeeList(
       const durationMins = calcDuration?.minutes || c.durationMinutes;
       const durationDisp = calcDuration?.display || c.durationDisplay;
       const travelMins = unifiedTravelMinutes;
+      const deductionMins = unifiedDeductionMinutes;
       const comp = durationMins !== undefined
-        ? calculateCompTime(durationMins, travelMins)
+        ? calculateCompTime(durationMins, travelMins, deductionMins)
         : undefined;
 
       const isCheckInVerified = Boolean(c.checkInHrVerified ?? c.hrVerified);
@@ -287,6 +320,8 @@ export function buildCombinedAttendeeList(
         name: c.name,
         title: c.title || '現場追加人員',
         department: c.department,
+        phone: c.phone,
+        email: c.email,
         status: 'WALK_IN',
         checkInTime: c.checkInTime,
         signatureDataUrl: c.signatureDataUrl,
@@ -304,8 +339,12 @@ export function buildCombinedAttendeeList(
         durationDisplay: durationDisp,
         travelMinutes: travelMins,
         travelDisplay: travelMins > 0 ? formatMinutesDisplay(travelMins) : '0分鐘',
+        deductionMinutes: deductionMins,
+        deductionDisplay: deductionMins > 0 ? formatMinutesDisplay(deductionMins) : '0分鐘',
+        deductionReason,
         compTimeMinutes: comp?.compMinutes,
-        compTimeDisplay: comp?.compDisplay
+        compTimeDisplay: comp?.compDisplay,
+        customFields: c.customFields
       });
     }
   });

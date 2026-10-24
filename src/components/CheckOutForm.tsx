@@ -40,7 +40,10 @@ interface CheckOutFormProps {
     travelMinutes?: number,
     travelDisplay?: string,
     compTimeMinutes?: number,
-    compTimeDisplay?: string
+    compTimeDisplay?: string,
+    deductionMinutes?: number,
+    deductionDisplay?: string,
+    deductionReason?: string
   ) => void;
   onToggleHrVerify?: (attendeeId: string, type?: 'checkin' | 'checkout') => void;
   onNavigateToDashboard: () => void;
@@ -62,8 +65,14 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
 
-  // 統一路途時間 (由承辦人在後台統一設定，全體學員均相同，預設 60 分鐘)
-  const unifiedTravelMinutes = eventInfo.defaultTravelMinutes ?? 60;
+  // 統一路途時間 (由承辦人在後台統一設定，全體學員均相同)
+  const showTravel = eventInfo.showTravelTime !== false;
+  const unifiedTravelMinutes = showTravel ? (eventInfo.defaultTravelMinutes ?? 60) : 0;
+
+  // 統一扣除時間 (由承辦人在後台統一設定，可勾選啟用並設定原因)
+  const showDeduction = Boolean(eventInfo.showDeductionTime);
+  const unifiedDeductionMinutes = showDeduction ? (eventInfo.defaultDeductionMinutes ?? 0) : 0;
+  const deductionReason = eventInfo.deductionReason || '午休用餐休息時間不計入補休';
 
   // Duplicate Check-Out modal
   const [showDuplicateModal, setShowDuplicateModal] = useState<{
@@ -81,6 +90,8 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
     checkOutTime: string;
     durationDisplay: string;
     travelDisplay: string;
+    deductionDisplay?: string;
+    deductionReason?: string;
     compTimeDisplay: string;
     signatureDataUrl: string;
     checkOutHrVerified?: boolean;
@@ -143,9 +154,9 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
     ? calculateParticipationDuration(selectedAttendee.checkInTime, currentTime.toISOString())
     : null;
 
-  // Live Comp Time: "參加時間(計算)" 加上 統一路途時間
+  // Live Comp Time: "參加時間(計算)" ＋ 路途時間 － 扣除時間
   const liveCompCalculation = liveDuration
-    ? calculateCompTime(liveDuration.minutes, unifiedTravelMinutes)
+    ? calculateCompTime(liveDuration.minutes, unifiedTravelMinutes, unifiedDeductionMinutes)
     : null;
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -201,9 +212,10 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
     const durationMinutes = duration?.minutes || 1;
     const durationDisplay = duration?.display || '1分鐘';
 
-    // 核予補休時間 ＝ 參加時間(計算) 加上 統一路途時間
-    const compResult = calculateCompTime(durationMinutes, unifiedTravelMinutes);
+    // 核予補休時間 ＝ 參加時間(計算) ＋ 路途時間 － 扣除時間
+    const compResult = calculateCompTime(durationMinutes, unifiedTravelMinutes, unifiedDeductionMinutes);
     const travelDisplay = unifiedTravelMinutes > 0 ? formatMinutesDisplay(unifiedTravelMinutes) : '0分鐘';
+    const deductionDisplay = unifiedDeductionMinutes > 0 ? formatMinutesDisplay(unifiedDeductionMinutes) : '0分鐘';
 
     // Target check-in record id
     const targetCheckInId = selectedAttendee.checkInId || selectedAttendee.id;
@@ -228,7 +240,10 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
       unifiedTravelMinutes,
       travelDisplay,
       compResult.compMinutes,
-      compResult.compDisplay
+      compResult.compDisplay,
+      unifiedDeductionMinutes,
+      deductionDisplay,
+      deductionReason
     );
 
     setRecentCheckedOut({
@@ -239,6 +254,8 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
       checkOutTime: nowIso,
       durationDisplay,
       travelDisplay,
+      deductionDisplay,
+      deductionReason,
       compTimeDisplay: compResult.compDisplay,
       signatureDataUrl,
       checkOutHrVerified: selectedAttendee.checkOutHrVerified
@@ -532,7 +549,7 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
                   </div>
                 </div>
 
-                {/* 4. Total Approved Comp Time (參加時間 + 路途時間) */}
+                {/* 4. Total Approved Comp Time (參加時間 + 路途時間 - 扣除時間) */}
                 <div className="bg-gradient-to-br from-amber-600 to-orange-700 text-white p-3 rounded-xl shadow-xs">
                   <div className="text-[11px] text-amber-100 font-bold flex items-center gap-1">
                     <Award className="w-3.5 h-3.5 text-amber-200" />
@@ -541,25 +558,41 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
                   <div className="text-lg font-black text-white tracking-tight mt-1">
                     {liveCompCalculation ? liveCompCalculation.compDisplay : '計算中...'}
                   </div>
-                  <div className="text-[10px] text-amber-100 mt-0.5 font-medium">
-                    參加時間 ＋ 統一路途 ({unifiedTravelMinutes}分)
+                  <div className="text-[10px] text-amber-100 mt-0.5 font-medium truncate">
+                    參加{showTravel ? ` ＋ 路途(${unifiedTravelMinutes}分)` : ''}{showDeduction ? ` － 扣除(${unifiedDeductionMinutes}分)` : ''}
                   </div>
                 </div>
               </div>
 
-              {/* Requirement 1: Unified Travel Time Display (全體學員統一設定，無須個別設定) */}
-              <div className="bg-white/95 p-3.5 rounded-xl border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-                <div className="flex items-center gap-2">
-                  <Car className="w-4 h-4 text-amber-700 shrink-0" />
-                  <span className="font-bold text-amber-950">
-                    公所統一路途時間：
-                  </span>
-                  <span className="font-extrabold text-amber-900 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
-                    {unifiedTravelMinutes} 分鐘
+              {/* Travel and Deduction Time Rules Banner */}
+              <div className="bg-white/95 p-3.5 rounded-xl border border-amber-200 space-y-2 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    {showTravel && (
+                      <div className="flex items-center gap-1.5">
+                        <Car className="w-4 h-4 text-amber-700 shrink-0" />
+                        <span className="font-bold text-slate-700">統一路途時間：</span>
+                        <span className="font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
+                          +{unifiedTravelMinutes} 分鐘
+                        </span>
+                      </div>
+                    )}
+                    {showDeduction && (
+                      <div className="flex items-center gap-1.5">
+                        <Clock className="w-4 h-4 text-rose-600 shrink-0" />
+                        <span className="font-bold text-slate-700">統一扣除時間：</span>
+                        <span className="font-bold text-rose-800 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                          -{unifiedDeductionMinutes} 分鐘 ({deductionReason})
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                    公式：參加時間{showTravel ? ' ＋ 路途時間' : ''}{showDeduction ? ' － 扣除時間' : ''}
                   </span>
                 </div>
                 <div className="text-slate-500 text-[11px]">
-                  (由承辦人於管理後台統一設定，全體學員均相同，系統自動加計核予補休)
+                  由承辦人於管理後台統一設定與管理，全體學員均統一套用，系統主動完成核算並列入正式名冊。
                 </div>
               </div>
 
@@ -653,12 +686,22 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
                   {recentCheckedOut.durationDisplay}
                 </span>
               </div>
-              <div className="flex justify-between items-center py-1 border-b border-amber-200/80">
-                <span className="text-slate-500">路途時間</span>
-                <span className="font-bold text-amber-800 font-mono">
-                  {recentCheckedOut.travelDisplay}
-                </span>
-              </div>
+              {showTravel && (
+                <div className="flex justify-between items-center py-1 border-b border-amber-200/80">
+                  <span className="text-slate-500">統一路途時間</span>
+                  <span className="font-bold text-amber-800 font-mono">
+                    +{recentCheckedOut.travelDisplay}
+                  </span>
+                </div>
+              )}
+              {showDeduction && (
+                <div className="flex justify-between items-center py-1 border-b border-amber-200/80">
+                  <span className="text-slate-500">統一扣除時間</span>
+                  <span className="font-bold text-rose-700 font-mono">
+                    -{recentCheckedOut.deductionDisplay} ({recentCheckedOut.deductionReason})
+                  </span>
+                </div>
+              )}
 
               {/* Highlighted Total Approved Comp Time */}
               <div className="p-3 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-xl flex items-center justify-between shadow-2xs">

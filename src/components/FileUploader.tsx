@@ -11,11 +11,17 @@ import {
   RefreshCw,
   Plus,
   X,
-  Users
+  Users,
+  CheckSquare
 } from 'lucide-react';
 
 interface FileUploaderProps {
-  onImport: (newParticipants: RegisteredParticipant[], mode: 'replace' | 'append') => void;
+  onImport: (
+    newParticipants: RegisteredParticipant[],
+    mode: 'replace' | 'append',
+    selectedCompletionColumns?: string[],
+    availableColumns?: string[]
+  ) => void;
   currentCount: number;
 }
 
@@ -24,9 +30,11 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onImport, currentCou
   const [parsedResult, setParsedResult] = useState<{
     participants: RegisteredParticipant[];
     rawRowsCount: number;
+    availableColumns: string[];
     recognizedColumns: { nameCol?: string; titleCol?: string; deptCol?: string };
     fileName: string;
   } | null>(null);
+  const [selectedCompletionColumns, setSelectedCompletionColumns] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
   const [importMode, setImportMode] = useState<'replace' | 'append'>('replace');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -55,6 +63,13 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onImport, currentCou
         ...result,
         fileName: file.name
       });
+
+      // Default select columns for completion screen (exclude name)
+      const nonNameCols = (result.availableColumns || []).filter(c => {
+        const lower = c.trim().toLowerCase();
+        return lower !== '姓名' && lower !== 'name' && lower !== '序號' && lower !== 'id';
+      });
+      setSelectedCompletionColumns(nonNameCols.length > 0 ? nonNameCols : ['職稱', '部門', '電話']);
     } catch (err: any) {
       console.error(err);
       setErrorMessage(`檔案解析失敗: ${err.message || '格式錯誤'}`);
@@ -83,7 +98,12 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onImport, currentCou
 
   const handleConfirmImport = () => {
     if (!parsedResult) return;
-    onImport(parsedResult.participants, importMode);
+    onImport(
+      parsedResult.participants,
+      importMode,
+      selectedCompletionColumns,
+      parsedResult.availableColumns
+    );
     setParsedResult(null);
   };
 
@@ -229,6 +249,51 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onImport, currentCou
                   )}
                 </div>
               ))}
+            </div>
+          </div>
+
+          {/* User Request 1: Checkboxes to select which columns to display on completion screen (附件1) */}
+          <div className="bg-indigo-50/70 p-3.5 rounded-xl border border-indigo-200/80 space-y-2.5">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-950">
+                <CheckSquare className="w-4 h-4 text-indigo-600 shrink-0" />
+                <span>勾選要在「學員報到手續完成（附件1）」畫面呈現的名冊欄位：</span>
+              </div>
+              <span className="text-[11px] font-semibold text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-200 self-start sm:self-auto">
+                已選取 {selectedCompletionColumns.length} 項欄位
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-600 leading-relaxed">
+              匯入名冊後，學員在手寫簽到完成時，系統彈窗將自動呈現所勾選的欄位內容（如職稱、單位、電話、座位、分組、餐點、備註等），利於學員知悉活動訊息。
+            </p>
+            <div className="flex flex-wrap gap-2 pt-1">
+              {(parsedResult.availableColumns || []).filter(c => !['姓名', 'name', 'id', '序號'].includes(c.toLowerCase())).map(col => {
+                const isChecked = selectedCompletionColumns.includes(col);
+                return (
+                  <label
+                    key={col}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer transition-colors border ${
+                      isChecked
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                        : 'bg-white text-slate-700 border-slate-300 hover:bg-indigo-50'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={e => {
+                        if (e.target.checked) {
+                          setSelectedCompletionColumns([...selectedCompletionColumns, col]);
+                        } else {
+                          setSelectedCompletionColumns(selectedCompletionColumns.filter(c => c !== col));
+                        }
+                      }}
+                      className="rounded text-indigo-600 focus:ring-0 w-3.5 h-3.5"
+                    />
+                    <span>{col}</span>
+                  </label>
+                );
+              })}
             </div>
           </div>
 

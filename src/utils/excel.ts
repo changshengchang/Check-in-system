@@ -21,6 +21,7 @@ function findColumnKey(row: Record<string, any>, candidates: string[]): string |
 export function parseSpreadsheet(data: ArrayBuffer): {
   participants: RegisteredParticipant[];
   rawRowsCount: number;
+  availableColumns: string[];
   recognizedColumns: { nameCol?: string; titleCol?: string; deptCol?: string };
 } {
   const workbook = XLSX.read(data, { type: 'array' });
@@ -29,8 +30,15 @@ export function parseSpreadsheet(data: ArrayBuffer): {
   const rawRows: Record<string, any>[] = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
 
   if (rawRows.length === 0) {
-    return { participants: [], rawRowsCount: 0, recognizedColumns: {} };
+    return { participants: [], rawRowsCount: 0, availableColumns: [], recognizedColumns: {} };
   }
+
+  // Extract all distinct column keys from headers
+  const availableColumns = Array.from(
+    new Set(
+      rawRows.flatMap(row => Object.keys(row).map(k => k.trim()).filter(Boolean))
+    )
+  );
 
   // Find column mapping from first row
   const sampleRow = rawRows[0];
@@ -72,6 +80,14 @@ export function parseSpreadsheet(data: ArrayBuffer): {
     const phone = phoneCol && row[phoneCol] ? String(row[phoneCol]).trim() : undefined;
     const email = emailCol && row[emailCol] ? String(row[emailCol]).trim() : undefined;
 
+    // Collect all dynamic custom fields from row
+    const customFields: Record<string, string> = {};
+    availableColumns.forEach(col => {
+      if (row[col] !== undefined && row[col] !== null && String(row[col]).trim() !== '') {
+        customFields[col] = String(row[col]).trim();
+      }
+    });
+
     participants.push({
       id: `imported-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
       name,
@@ -79,6 +95,7 @@ export function parseSpreadsheet(data: ArrayBuffer): {
       department: department || undefined,
       phone,
       email,
+      customFields,
       registeredAt: new Date().toISOString()
     });
   });
@@ -86,6 +103,7 @@ export function parseSpreadsheet(data: ArrayBuffer): {
   return {
     participants,
     rawRowsCount: rawRows.length,
+    availableColumns,
     recognizedColumns: {
       nameCol: nameCol || undefined,
       titleCol: titleCol || undefined,
@@ -104,48 +122,43 @@ export function exportToExcel(attendees: CombinedAttendeeView[], eventInfo: Even
     WALK_IN: '現場臨時報到'
   };
 
-  const exportRows = attendees.map((item, idx) => ({
-    '項次': idx + 1,
-    '姓名': item.name,
-    '職稱': item.title || '—',
-    '部門/單位': item.department || '—',
-    '報到狀態': statusLabels[item.status] || item.status,
-    '簽到時間': item.checkInTime ? new Date(item.checkInTime).toLocaleString('zh-TW', { hour12: false }) : '—',
-    '簽退時間': item.checkOutTime ? new Date(item.checkOutTime).toLocaleString('zh-TW', { hour12: false }) : (item.checkInTime ? '未簽退' : '—'),
-    '參加時間(計算)': item.durationDisplay || (item.checkInTime ? '研習中(未簽退)' : '—'),
-    '參加時間(分鐘)': item.durationMinutes ?? '—',
-    '路途時間': item.travelDisplay || '0分鐘',
-    '核予補休時間': item.compTimeDisplay || (item.durationDisplay ? item.durationDisplay : '—'),
-    '核予補休總分鐘數': item.compTimeMinutes ?? '—',
-    '手寫簽到狀態': item.signatureDataUrl ? '已簽名' : '未簽名',
-    '手寫簽退狀態': item.checkOutSignatureDataUrl ? '已簽退' : '未簽退',
-    '簽到覆核': item.checkInHrVerified || item.hrVerified ? '已覆核' : '未覆核',
-    '簽退覆核': item.checkOutHrVerified ? '已覆核' : (item.checkOutTime ? '未覆核' : '—'),
-    '備註/類別': item.isWalkIn ? '現場追加' : '名冊預先報名'
-  }));
+  const showTravel = eventInfo.showTravelTime !== false;
+  const showDeduction = Boolean(eventInfo.showDeductionTime);
+
+  const exportRows = attendees.map((item, idx) => {
+    const row: Record<string, any> = {
+      '項次': idx + 1,
+      '姓名': item.name,
+      '職稱': item.title || '—',
+      '部門/單位': item.department || '—',
+      '報到狀態': statusLabels[item.status] || item.status,
+      '簽到時間': item.checkInTime ? new Date(item.checkInTime).toLocaleString('zh-TW', { hour12: false }) : '—',
+      '簽退時間': item.checkOutTime ? new Date(item.checkOutTime).toLocaleString('zh-TW', { hour12: false }) : (item.checkInTime ? '未簽退' : '—'),
+      '參加時間(計算)': item.durationDisplay || (item.checkInTime ? '研習中(未簽退)' : '—'),
+      '參加時間(分鐘)': item.durationMinutes ?? '—'
+    };
+
+    if (showTravel) {
+      row['路途時間'] = item.travelDisplay || '0分鐘';
+    }
+
+    if (showDeduction) {
+      row['扣除時間'] = item.deductionDisplay || '0分鐘';
+      row['扣除原因'] = item.deductionReason || eventInfo.deductionReason || '—';
+    }
+
+    row['核予補休時間'] = item.compTimeDisplay || (item.durationDisplay ? item.durationDisplay : '—');
+    row['核予補休總分鐘數'] = item.compTimeMinutes ?? '—';
+    row['手寫簽到狀態'] = item.signatureDataUrl ? '已簽名' : '未簽名';
+    row['手寫簽退狀態'] = item.checkOutSignatureDataUrl ? '已簽退' : '未簽退';
+    row['簽到覆核'] = item.checkInHrVerified || item.hrVerified ? '已覆核' : '未覆核';
+    row['簽退覆核'] = item.checkOutHrVerified ? '已覆核' : (item.checkOutTime ? '未覆核' : '—');
+    row['備註/類別'] = item.isWalkIn ? '現場追加' : '名冊預先報名';
+
+    return row;
+  });
 
   const worksheet = XLSX.utils.json_to_sheet(exportRows);
-
-  // Set column widths
-  worksheet['!cols'] = [
-    { wch: 8 },  // 項次
-    { wch: 14 }, // 姓名
-    { wch: 18 }, // 職稱
-    { wch: 18 }, // 部門
-    { wch: 16 }, // 報到狀態
-    { wch: 22 }, // 簽到時間
-    { wch: 22 }, // 簽退時間
-    { wch: 18 }, // 參加時間
-    { wch: 15 }, // 參加分鐘數
-    { wch: 14 }, // 路途時間
-    { wch: 18 }, // 核予補休時間
-    { wch: 18 }, // 核予補休分鐘數
-    { wch: 15 }, // 簽到簽名
-    { wch: 15 }, // 簽退簽名
-    { wch: 14 }, // 簽到覆核
-    { wch: 14 }, // 簽退覆核
-    { wch: 16 }  // 備註
-  ];
 
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, '簽到簽退與補休清冊');
@@ -164,6 +177,8 @@ export function exportToCsv(attendees: CombinedAttendeeView[], eventInfo: EventI
     NOT_CHECKED_IN: '未完成報到',
     WALK_IN: '現場臨時報到'
   };
+  const showTravel = eventInfo.showTravelTime !== false;
+  const showDeduction = Boolean(eventInfo.showDeductionTime);
 
   const headers = [
     '項次',
@@ -174,8 +189,18 @@ export function exportToCsv(attendees: CombinedAttendeeView[], eventInfo: EventI
     '簽到時間',
     '簽退時間',
     '參加時間(計算)',
-    '參加時間(分鐘)',
-    '路途時間',
+    '參加時間(分鐘)'
+  ];
+
+  if (showTravel) {
+    headers.push('路途時間');
+  }
+
+  if (showDeduction) {
+    headers.push('扣除時間', '扣除原因');
+  }
+
+  headers.push(
     '核予補休時間',
     '核予補休總分鐘數',
     '手寫簽到狀態',
@@ -183,26 +208,44 @@ export function exportToCsv(attendees: CombinedAttendeeView[], eventInfo: EventI
     '簽到覆核',
     '簽退覆核',
     '名單類別'
-  ];
-  const rows = attendees.map((item, idx) => [
-    idx + 1,
-    `"${item.name.replace(/"/g, '""')}"`,
-    `"${(item.title || '—').replace(/"/g, '""')}"`,
-    `"${(item.department || '—').replace(/"/g, '""')}"`,
-    `"${statusLabels[item.status] || item.status}"`,
-    `"${item.checkInTime ? new Date(item.checkInTime).toLocaleString('zh-TW', { hour12: false }) : '—'}"`,
-    `"${item.checkOutTime ? new Date(item.checkOutTime).toLocaleString('zh-TW', { hour12: false }) : (item.checkInTime ? '未簽退' : '—')}"`,
-    `"${(item.durationDisplay || (item.checkInTime ? '研習中(未簽退)' : '—')).replace(/"/g, '""')}"`,
-    `"${item.durationMinutes ?? '—'}"`,
-    `"${(item.travelDisplay || '0分鐘').replace(/"/g, '""')}"`,
-    `"${(item.compTimeDisplay || (item.durationDisplay ? item.durationDisplay : '—')).replace(/"/g, '""')}"`,
-    `"${item.compTimeMinutes ?? '—'}"`,
-    `"${item.signatureDataUrl ? '已簽名' : '未簽名'}"`,
-    `"${item.checkOutSignatureDataUrl ? '已簽退' : '未簽退'}"`,
-    `"${item.checkInHrVerified || item.hrVerified ? '已覆核' : '未覆核'}"`,
-    `"${item.checkOutHrVerified ? '已覆核' : (item.checkOutTime ? '未覆核' : '—')}"`,
-    `"${item.isWalkIn ? '現場追加' : '名冊預先報名'}"`
-  ]);
+  );
+
+  const rows = attendees.map((item, idx) => {
+    const rowVals: any[] = [
+      idx + 1,
+      `"${item.name.replace(/"/g, '""')}"`,
+      `"${(item.title || '—').replace(/"/g, '""')}"`,
+      `"${(item.department || '—').replace(/"/g, '""')}"`,
+      `"${statusLabels[item.status] || item.status}"`,
+      `"${item.checkInTime ? new Date(item.checkInTime).toLocaleString('zh-TW', { hour12: false }) : '—'}"`,
+      `"${item.checkOutTime ? new Date(item.checkOutTime).toLocaleString('zh-TW', { hour12: false }) : (item.checkInTime ? '未簽退' : '—')}"`,
+      `"${(item.durationDisplay || (item.checkInTime ? '研習中(未簽退)' : '—')).replace(/"/g, '""')}"`,
+      `"${item.durationMinutes ?? '—'}"`
+    ];
+
+    if (showTravel) {
+      rowVals.push(`"${(item.travelDisplay || '0分鐘').replace(/"/g, '""')}"`);
+    }
+
+    if (showDeduction) {
+      rowVals.push(
+        `"${(item.deductionDisplay || '0分鐘').replace(/"/g, '""')}"`,
+        `"${(item.deductionReason || eventInfo.deductionReason || '—').replace(/"/g, '""')}"`
+      );
+    }
+
+    rowVals.push(
+      `"${(item.compTimeDisplay || (item.durationDisplay ? item.durationDisplay : '—')).replace(/"/g, '""')}"`,
+      `"${item.compTimeMinutes ?? '—'}"`,
+      `"${item.signatureDataUrl ? '已簽名' : '未簽名'}"`,
+      `"${item.checkOutSignatureDataUrl ? '已簽退' : '未簽退'}"`,
+      `"${item.checkInHrVerified || item.hrVerified ? '已覆核' : '未覆核'}"`,
+      `"${item.checkOutHrVerified ? '已覆核' : (item.checkOutTime ? '未覆核' : '—')}"`,
+      `"${item.isWalkIn ? '現場追加' : '名冊預先報名'}"`
+    );
+
+    return rowVals;
+  });
 
   const csvContent = '\uFEFF' + [
     `# 活動名稱: "${eventInfo.title.replace(/"/g, '""')}"`,

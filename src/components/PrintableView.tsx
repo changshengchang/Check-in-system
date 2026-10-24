@@ -170,8 +170,24 @@ export const PrintableView: React.FC<PrintableViewProps> = ({
                 )}
                 {showCompTime && (
                   <>
-                    <th className="py-2.5 px-2 w-20 text-center">路途時間</th>
-                    <th className="py-2.5 px-2 w-24 text-center bg-indigo-50/50">核予補休時間</th>
+                    {eventInfo.showTravelTime !== false && (
+                      <th className="py-2.5 px-2 w-20 text-center">路途時間</th>
+                    )}
+                    {eventInfo.showDeductionTime && (
+                      <th className="py-2.5 px-2 w-20 text-center text-rose-800">扣除時間</th>
+                    )}
+                    <th className="py-2.5 px-2 w-24 text-center bg-indigo-50/50">
+                      <div>核予補休時間</div>
+                      <div className="text-[9px] font-normal text-indigo-700">
+                        {eventInfo.showTravelTime !== false && eventInfo.showDeductionTime
+                          ? '(參加+路途-扣除)'
+                          : eventInfo.showTravelTime !== false
+                          ? '(參加+路途)'
+                          : eventInfo.showDeductionTime
+                          ? '(參加-扣除)'
+                          : '(同參加時間)'}
+                      </div>
+                    </th>
                   </>
                 )}
                 {showSignatures && (
@@ -232,9 +248,16 @@ export const PrintableView: React.FC<PrintableViewProps> = ({
                     )}
                     {showCompTime && (
                       <>
-                        <td className="py-2 px-2 text-center font-mono text-[11px] text-slate-600">
-                          {a.travelDisplay || '0分鐘'}
-                        </td>
+                        {eventInfo.showTravelTime !== false && (
+                          <td className="py-2 px-2 text-center font-mono text-[11px] text-slate-600">
+                            {a.travelDisplay || `${eventInfo.defaultTravelMinutes ?? 60}分鐘`}
+                          </td>
+                        )}
+                        {eventInfo.showDeductionTime && (
+                          <td className="py-2 px-2 text-center font-mono text-[11px] text-rose-700">
+                            -{a.deductionDisplay || `${eventInfo.defaultDeductionMinutes ?? 60}分鐘`}
+                          </td>
+                        )}
                         <td className="py-2 px-2 text-center font-bold text-[11px] text-indigo-900 bg-indigo-50/30">
                           {a.compTimeDisplay || (a.durationDisplay ? a.durationDisplay : '—')}
                         </td>

@@ -25,6 +25,7 @@ import {
   Copy,
   Check,
   AlertTriangle,
+  MinusCircle,
   Clock,
   Sparkles,
   ExternalLink,
@@ -36,7 +37,9 @@ import {
   Car,
   Edit3,
   Save,
-  X
+  X,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -44,7 +47,12 @@ interface DashboardProps {
   roster: RegisteredParticipant[];
   checkIns: CheckInRecord[];
   attendees: CombinedAttendeeView[];
-  onImportRoster: (participants: RegisteredParticipant[], mode: 'replace' | 'append') => void;
+  onImportRoster: (
+    participants: RegisteredParticipant[],
+    mode: 'replace' | 'append',
+    selectedColumns?: string[],
+    allColumns?: string[]
+  ) => void;
   onAddRosterParticipant: (participant: RegisteredParticipant) => void;
   onDeleteRosterParticipant: (id: string) => void;
   onManualCheckIn: (attendee: CombinedAttendeeView) => void;
@@ -111,6 +119,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
   // Extract unique departments for filter
   const departments = Array.from(
     new Set(attendees.map(a => a.department).filter((d): d is string => Boolean(d && d.trim())))
+  );
+
+  // Organizer display preferences
+  const showTravel = eventInfo.showTravelTime !== false;
+  const showDeduction = !!eventInfo.showDeductionTime;
+  const colSpanCount = 12 + (showTravel ? 1 : 0) + (showDeduction ? 1 : 0);
+
+  // Available roster columns for Attachment 1 (學員完成畫面呈現欄位)
+  const allKnownColumns = Array.from(
+    new Set([
+      '職稱',
+      '部門',
+      '電話',
+      '電子信箱',
+      ...(eventInfo.availableRosterColumns || []),
+      ...roster.flatMap(p => Object.keys(p.customFields || {}))
+    ])
   );
 
   // Filter attendees list based on tab, search, and department
@@ -194,10 +219,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
               setIsEditingEvent(true);
             }}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition-colors cursor-pointer shadow-2xs"
-            title="承辦人專屬：編輯活動名稱、日期、地點及統一路途時間"
+            title="承辦人專屬：編輯活動名稱、日期、地點、路途時間與扣除時間設定"
           >
             <Edit3 className="w-4 h-4 text-indigo-600" />
-            <span>編輯活動資訊與路途時間</span>
+            <span>編輯活動資訊、路途與扣除時間</span>
           </button>
 
           <button
@@ -502,6 +527,72 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <div className="p-6 space-y-6">
             <FileUploader onImport={onImportRoster} currentCount={roster.length} />
 
+            {/* Attachment 1 (學員報到手續完成畫面) Display Fields Manager */}
+            <div className="bg-gradient-to-br from-indigo-50/70 to-blue-50/70 rounded-2xl p-5 border border-indigo-200">
+              <div className="flex items-start justify-between mb-3">
+                <div>
+                  <h4 className="text-sm font-bold text-indigo-950 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-indigo-600" />
+                    <span>學員報到端完成手續畫面（附件1）呈現欄位勾選</span>
+                    <span className="text-[10px] bg-indigo-100 text-indigo-800 font-bold px-2 py-0.5 rounded-full">
+                      已選 {(eventInfo.completionDisplayFields || []).length} 欄位
+                    </span>
+                  </h4>
+                  <p className="text-xs text-indigo-800/80 mt-1">
+                    在此勾選之名冊欄位資料，將於學員在【學員報到端】簽署完成時之跳出畫面（如附件1「報到手續完成！」）中動態呈現，以利學員知悉活動訊息與各項備註。
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white/90 backdrop-blur-xs rounded-xl p-3.5 border border-indigo-100">
+                <div className="text-[11px] font-bold text-slate-600 mb-2 flex items-center justify-between">
+                  <span>點選下方方塊勾選 / 取消欲呈現於附件1之欄位：</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onUpdateEventInfo({ ...eventInfo, completionDisplayFields: allKnownColumns })}
+                      className="text-[11px] text-indigo-600 hover:underline font-semibold cursor-pointer"
+                    >
+                      全選
+                    </button>
+                    <span>·</span>
+                    <button
+                      type="button"
+                      onClick={() => onUpdateEventInfo({ ...eventInfo, completionDisplayFields: ['職稱', '部門', '電話'] })}
+                      className="text-[11px] text-slate-500 hover:underline cursor-pointer"
+                    >
+                      重設為預設
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {allKnownColumns.map(col => {
+                    const isChecked = (eventInfo.completionDisplayFields || ['職稱', '部門', '電話']).includes(col);
+                    return (
+                      <button
+                        key={col}
+                        type="button"
+                        onClick={() => {
+                          const cur = eventInfo.completionDisplayFields || ['職稱', '部門', '電話'];
+                          const next = isChecked ? cur.filter(c => c !== col) : [...cur, col];
+                          onUpdateEventInfo({ ...eventInfo, completionDisplayFields: next });
+                        }}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+                          isChecked
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs font-semibold'
+                            : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50'
+                        }`}
+                      >
+                        {isChecked ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+                        <span>{col}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
             {/* Current Roster Quick Management */}
             <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200">
               <div className="flex items-center justify-between mb-3">
@@ -603,8 +694,24 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       <th className="py-3 px-3 text-center">報到時間</th>
                       <th className="py-3 px-3 text-center">簽退時間</th>
                       <th className="py-3 px-3 text-center">參加時間(計算)</th>
-                      <th className="py-3 px-3 text-center">路途時間</th>
-                      <th className="py-3 px-3 text-center bg-indigo-50/50">核予補休時間</th>
+                      {showTravel && (
+                        <th className="py-3 px-3 text-center">路途時間</th>
+                      )}
+                      {showDeduction && (
+                        <th className="py-3 px-3 text-center text-rose-700">扣除時間</th>
+                      )}
+                      <th className="py-3 px-3 text-center bg-indigo-50/50">
+                        <div>核予補休時間</div>
+                        <div className="text-[9px] font-normal text-indigo-600">
+                          {showTravel && showDeduction
+                            ? '(參加＋路途－扣除)'
+                            : showTravel
+                            ? '(參加＋統一路途)'
+                            : showDeduction
+                            ? '(參加－扣除時間)'
+                            : '(同參加時間)'}
+                        </div>
+                      </th>
                       <th className="py-3 px-3 text-center">手寫簽名</th>
                       <th className="py-3 px-3 text-center">簽到覆核</th>
                       <th className="py-3 px-3 text-center">簽退覆核</th>
@@ -614,7 +721,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <tbody className="divide-y divide-slate-100">
                     {filteredAttendees.length === 0 ? (
                       <tr>
-                        <td colSpan={14} className="py-12 text-center text-slate-400">
+                        <td colSpan={colSpanCount} className="py-12 text-center text-slate-400">
                           <Users className="w-8 h-8 mx-auto text-slate-300 mb-2" />
                           <p className="text-sm">查無符合條件之人員資料</p>
                           <p className="text-xs text-slate-400 mt-0.5">請確認搜尋關鍵字或篩選設定</p>
@@ -721,17 +828,42 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             </td>
 
                             {/* Travel Time (統一路途時間) */}
-                            <td className="py-3 px-3 text-center">
-                              {isChecked ? (
-                                <span className="font-mono text-[11px] text-slate-700 font-medium">
-                                  {attendee.travelDisplay || `${eventInfo.defaultTravelMinutes ?? 60}分鐘`}
-                                </span>
-                              ) : (
-                                <span className="text-slate-300">—</span>
-                              )}
-                            </td>
+                            {showTravel && (
+                              <td className="py-3 px-3 text-center">
+                                {isChecked ? (
+                                  <span className="font-mono text-[11px] text-slate-700 font-medium">
+                                    {attendee.travelDisplay || `${eventInfo.defaultTravelMinutes ?? 60}分鐘`}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-300">—</span>
+                                )}
+                              </td>
+                            )}
 
-                            {/* Approved Comp Time (核予補休時間 ＝ 參加時間 ＋ 路途時間) */}
+                            {/* Deduction Time (統一扣除時間) */}
+                            {showDeduction && (
+                              <td className="py-3 px-3 text-center">
+                                {isChecked ? (
+                                  <div className="flex flex-col items-center">
+                                    <span className="font-mono text-[11px] text-rose-700 font-bold bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
+                                      -{attendee.deductionDisplay || `${eventInfo.defaultDeductionMinutes ?? 60}分鐘`}
+                                    </span>
+                                    {eventInfo.deductionReason && (
+                                      <span
+                                        className="text-[10px] text-slate-400 max-w-[90px] truncate mt-0.5"
+                                        title={eventInfo.deductionReason}
+                                      >
+                                        {eventInfo.deductionReason}
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-300">—</span>
+                                )}
+                              </td>
+                            )}
+
+                            {/* Approved Comp Time (核予補休時間 ＝ 參加時間 ＋ 路途時間 － 扣除時間) */}
                             <td className="py-3 px-3 text-center">
                               {attendee.compTimeDisplay ? (
                                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-black bg-indigo-100 text-indigo-900 border border-indigo-300 shadow-2xs">
@@ -927,7 +1059,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    if (confirm('確定要清空所有人員的報到簽名紀錄嗎？名冊人員資料將會保留。')) {
+                    if (confirm('請確定是否要清除,清除後資料無法復原')) {
                       onResetAllCheckIns();
                     }
                   }}
@@ -1083,7 +1215,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900">
-                    承辦人設定：編輯活動資訊與統一路途時間
+                    承辦人設定：編輯活動資訊、路途與扣除時間設定
                   </h3>
                   <p className="text-xs text-slate-500">
                     僅後台承辦人具權限修改，設定後將即時同步至簽到端與簽退端
@@ -1093,7 +1225,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <button
                 type="button"
                 onClick={() => setIsEditingEvent(false)}
-                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1104,7 +1236,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 e.preventDefault();
                 onUpdateEventInfo({
                   ...eventFormData,
-                  defaultTravelMinutes: Number(eventFormData.defaultTravelMinutes) >= 0 ? Number(eventFormData.defaultTravelMinutes) : 60
+                  showTravelTime: eventFormData.showTravelTime ?? true,
+                  defaultTravelMinutes: Number(eventFormData.defaultTravelMinutes) >= 0 ? Number(eventFormData.defaultTravelMinutes) : 60,
+                  showDeductionTime: eventFormData.showDeductionTime ?? false,
+                  defaultDeductionMinutes: Number(eventFormData.defaultDeductionMinutes) >= 0 ? Number(eventFormData.defaultDeductionMinutes) : 60,
+                  deductionReason: eventFormData.deductionReason || '午休用餐休息時間不計入補休'
                 });
                 setIsEditingEvent(false);
               }}
@@ -1188,58 +1324,172 @@ export const Dashboard: React.FC<DashboardProps> = ({
               {/* Unified Travel Time Setting (統一路途時間) */}
               <div className="bg-gradient-to-br from-indigo-50/70 to-blue-50/60 p-4 rounded-2xl border border-indigo-200/80 space-y-3">
                 <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
-                      <Clock className="w-4 h-4 text-indigo-600" />
-                      <span>全體學員統一路途時間 (分鐘)</span>
-                      <span className="text-[10px] bg-indigo-200 text-indigo-900 px-1.5 py-0.2 rounded font-semibold">
-                        承辦人統一設定
-                      </span>
-                    </h4>
-                    <p className="text-[11px] text-slate-600 mt-0.5">
-                      全體參加人員之「路途時間」均統一由此套用，簽退時系統將自動以【參加時間 ＋ 統一路途時間】核予補休時間，無需逐一對個別學員重複設定。
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <div className="relative w-36">
+                  <label className="inline-flex items-center gap-2 cursor-pointer font-bold text-xs text-indigo-950">
                     <input
-                      type="number"
-                      min={0}
-                      max={480}
-                      step={5}
-                      value={eventFormData.defaultTravelMinutes ?? 60}
-                      onChange={e => setEventFormData({ ...eventFormData, defaultTravelMinutes: Number(e.target.value) || 0 })}
-                      className="w-full px-3 py-2 rounded-xl border border-indigo-300 text-sm font-bold text-indigo-900 bg-white focus:ring-2 focus:ring-indigo-500 pr-12 text-center"
+                      type="checkbox"
+                      checked={eventFormData.showTravelTime ?? true}
+                      onChange={e => setEventFormData({ ...eventFormData, showTravelTime: e.target.checked })}
+                      className="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4"
                     />
-                    <span className="absolute right-3 top-2 text-xs font-semibold text-slate-500">分鐘</span>
-                  </div>
-
-                  {/* Preset quick buttons */}
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {[
-                      { label: '0分 (無路程)', val: 0 },
-                      { label: '30分鐘', val: 30 },
-                      { label: '60分 (1小時)', val: 60 },
-                      { label: '90分 (1.5小時)', val: 90 },
-                      { label: '120分 (2小時)', val: 120 }
-                    ].map(preset => (
-                      <button
-                        key={preset.val}
-                        type="button"
-                        onClick={() => setEventFormData({ ...eventFormData, defaultTravelMinutes: preset.val })}
-                        className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                          (eventFormData.defaultTravelMinutes ?? 60) === preset.val
-                            ? 'bg-indigo-600 text-white shadow-2xs'
-                            : 'bg-white text-slate-700 border border-slate-300 hover:bg-indigo-50 hover:border-indigo-300'
-                        }`}
-                      >
-                        {preset.label}
-                      </button>
-                    ))}
-                  </div>
+                    <Clock className="w-4 h-4 text-indigo-600" />
+                    <span>啟用並顯示「路途時間」欄位 (承辦人統一定義)</span>
+                  </label>
+                  <span className="text-[10px] bg-indigo-200 text-indigo-900 px-1.5 py-0.2 rounded font-semibold">
+                    {eventFormData.showTravelTime !== false ? '已啟用' : '已停用'}
+                  </span>
                 </div>
+
+                {eventFormData.showTravelTime !== false ? (
+                  <>
+                    <p className="text-[11px] text-slate-600">
+                      由承辦人統一設定（所有學員之路途時間均相同），簽退時系統將自動以【參加時間 ＋ 統一路途時間】核予補休時間，無需逐一對個別學員重複設定。
+                    </p>
+
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 pt-1">
+                      <div className="relative w-36">
+                        <input
+                          type="number"
+                          min={0}
+                          max={480}
+                          step={5}
+                          value={eventFormData.defaultTravelMinutes ?? 60}
+                          onChange={e => setEventFormData({ ...eventFormData, defaultTravelMinutes: Number(e.target.value) || 0 })}
+                          className="w-full px-3 py-2 rounded-xl border border-indigo-300 text-sm font-bold text-indigo-900 bg-white focus:ring-2 focus:ring-indigo-500 pr-12 text-center"
+                        />
+                        <span className="absolute right-3 top-2 text-xs font-semibold text-slate-500">分鐘</span>
+                      </div>
+
+                      {/* Preset quick buttons */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {[
+                          { label: '0分 (無路程)', val: 0 },
+                          { label: '30分鐘', val: 30 },
+                          { label: '60分 (1小時)', val: 60 },
+                          { label: '90分 (1.5小時)', val: 90 },
+                          { label: '120分 (2小時)', val: 120 }
+                        ].map(preset => (
+                          <button
+                            key={preset.val}
+                            type="button"
+                            onClick={() => setEventFormData({ ...eventFormData, defaultTravelMinutes: preset.val })}
+                            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                              (eventFormData.defaultTravelMinutes ?? 60) === preset.val
+                                ? 'bg-indigo-600 text-white shadow-2xs'
+                                : 'bg-white text-slate-700 border border-slate-300 hover:bg-indigo-50 hover:border-indigo-300'
+                            }`}
+                          >
+                            {preset.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-xs text-slate-500 italic bg-white/60 p-2 rounded-lg">
+                    目前已關閉路途時間欄位，簽退端與名冊將不顯示路途時間，計算補休時亦不額外加計路程時數。
+                  </p>
+                )}
+              </div>
+
+              {/* Deduction Time Setting (統一扣除時間) */}
+              <div className="bg-gradient-to-br from-rose-50/70 to-amber-50/60 p-4 rounded-2xl border border-rose-200/80 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="inline-flex items-center gap-2 cursor-pointer font-bold text-xs text-rose-950">
+                    <input
+                      type="checkbox"
+                      checked={eventFormData.showDeductionTime ?? false}
+                      onChange={e => setEventFormData({ ...eventFormData, showDeductionTime: e.target.checked })}
+                      className="rounded text-rose-600 focus:ring-rose-500 h-4 w-4"
+                    />
+                    <MinusCircle className="w-4 h-4 text-rose-600" />
+                    <span>啟用並顯示「扣除時間」欄位 (比照路途時間由承辦人統一設定)</span>
+                  </label>
+                  <span className="text-[10px] bg-rose-200 text-rose-900 px-1.5 py-0.2 rounded font-semibold">
+                    {eventFormData.showDeductionTime ? '已啟用' : '已停用'}
+                  </span>
+                </div>
+
+                {eventFormData.showDeductionTime ? (
+                  <>
+                    <p className="text-[11px] text-slate-600">
+                      全體參加人員之扣除時間統一由此設定（例如用餐休息時間），核算補休時將自參加時數中扣除。
+                    </p>
+
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 pt-1">
+                      <div className="relative w-36">
+                        <input
+                          type="number"
+                          min={0}
+                          max={480}
+                          step={5}
+                          value={eventFormData.defaultDeductionMinutes ?? 60}
+                          onChange={e => setEventFormData({ ...eventFormData, defaultDeductionMinutes: Number(e.target.value) || 0 })}
+                          className="w-full px-3 py-2 rounded-xl border border-rose-300 text-sm font-bold text-rose-900 bg-white focus:ring-2 focus:ring-rose-500 pr-12 text-center"
+                        />
+                        <span className="absolute right-3 top-2 text-xs font-semibold text-slate-500">分鐘</span>
+                      </div>
+
+                      {/* Preset quick buttons */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {[
+                          { label: '0分 (不扣除)', val: 0 },
+                          { label: '30分鐘', val: 30 },
+                          { label: '60分 (1小時)', val: 60 },
+                          { label: '90分 (1.5小時)', val: 90 },
+                          { label: '120分 (2小時)', val: 120 }
+                        ].map(preset => (
+                          <button
+                            key={preset.val}
+                            type="button"
+                            onClick={() => setEventFormData({ ...eventFormData, defaultDeductionMinutes: preset.val })}
+                            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                              (eventFormData.defaultDeductionMinutes ?? 60) === preset.val
+                                ? 'bg-rose-600 text-white shadow-2xs'
+                                : 'bg-white text-slate-700 border border-slate-300 hover:bg-rose-50 hover:border-rose-300'
+                            }`}
+                          >
+                            {preset.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Deduction Reason Input */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        扣除時間原因說明
+                      </label>
+                      <input
+                        type="text"
+                        value={eventFormData.deductionReason ?? ''}
+                        onChange={e => setEventFormData({ ...eventFormData, deductionReason: e.target.value })}
+                        placeholder="例：午休用餐休息時間不計入補休"
+                        className="w-full px-3 py-2 rounded-xl border border-rose-200 text-xs focus:ring-2 focus:ring-rose-500 bg-white"
+                      />
+                      <span className="text-[10px] text-slate-400 mt-0.5 block">
+                        此原因將載明於簽退端計算詳情、管理後台名冊及列印/匯出報表中
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-xs text-slate-500 italic bg-white/60 p-2 rounded-lg">
+                    目前已關閉扣除時間欄位，簽退端與名冊將不顯示扣除時間，補休計算不進行時間扣減。
+                  </p>
+                )}
+              </div>
+
+              {/* Comp Time Formula Callout */}
+              <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200 text-xs text-slate-700">
+                <div className="font-bold text-slate-900 flex items-center gap-1.5 mb-1">
+                  <Award className="w-4 h-4 text-indigo-600" />
+                  <span>核予補休時間定義與計算公式</span>
+                </div>
+                <div className="text-[11px] font-mono bg-white p-2 rounded-lg border border-slate-200 text-indigo-950 font-semibold my-1">
+                  核予補休時間 ＝ 參加時間 {eventFormData.showTravelTime !== false ? '＋ 路途時間' : ''} {eventFormData.showDeductionTime ? '－ 扣除時間' : ''}
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  承辦人可勾選上方選項決定是否啟用「路途時間」與「扣除時間」；未勾選者不納入計算，計算結果小於 0 則以 0 分鐘計。
+                </p>
               </div>
 
               {/* Action Buttons */}
