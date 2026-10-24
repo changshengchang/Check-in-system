@@ -1,0 +1,36 @@
+rules_version = '2';
+
+// 三義鄉公所簽到系統 Firestore 安全規則
+// 貼到 Firebase 主控台 → Firestore → 規則 (Rules) → 發布
+//
+// 資料結構：
+//   events/{eventId}                → 活動資訊 + 名冊
+//   events/{eventId}/checkIns/{id}  → 每位學員的簽到/簽退紀錄
+//
+// 注意：目前系統沒有登入機制，這份規則只限制「能寫入的位置與格式」，
+// 知道網址的人仍可讀寫資料。正式長期使用建議再加上 Firebase Authentication。
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /events/{eventId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.eventInfo is map
+                            && request.resource.data.roster is list;
+      allow delete: if false;
+
+      match /checkIns/{checkInId} {
+        allow read: if true;
+        allow create, update: if request.resource.data.name is string
+                              && request.resource.data.name.size() > 0
+                              && request.resource.data.name.size() <= 100
+                              && request.resource.data.checkInTime is string;
+        allow delete: if true;
+      }
+    }
+
+    // 其他所有路徑一律拒絕
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { EventInfo } from '../types';
+import { EventInfo, SyncStatus } from '../types';
 import { Calendar, MapPin, UserCheck, LayoutDashboard, Clock, Sparkles, Lock, Unlock, LogOut, RefreshCw, Wifi } from 'lucide-react';
 
 interface EventHeaderProps {
@@ -13,7 +13,48 @@ interface EventHeaderProps {
   totalExpectedCount: number;
   myDeviceId?: string;
   lastSyncInfo?: { time: string; device: string; action: string } | null;
+  syncStatus?: SyncStatus;
+  syncError?: string | null;
 }
+
+// 同步狀態標籤：讓使用者一眼看出資料是否已送上雲端
+const SYNC_BADGE: Record<SyncStatus, { label: string; tip: string; badge: string; dot: string; tag: string }> = {
+  synced: {
+    label: '已即時同步',
+    tip: '已連上雲端，任何裝置的修改都會在 1～2 秒內出現在這裡',
+    badge: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    dot: 'bg-emerald-500 animate-pulse',
+    tag: 'bg-emerald-100 text-emerald-800'
+  },
+  pending: {
+    label: '上傳中…',
+    tip: '剛才的修改正在送往雲端',
+    badge: 'bg-sky-50 text-sky-700 border-sky-200',
+    dot: 'bg-sky-500 animate-pulse',
+    tag: 'bg-sky-100 text-sky-800'
+  },
+  connecting: {
+    label: '連線中…',
+    tip: '正在連線雲端資料庫',
+    badge: 'bg-slate-50 text-slate-600 border-slate-200',
+    dot: 'bg-slate-400 animate-pulse',
+    tag: 'bg-slate-100 text-slate-700'
+  },
+  offline: {
+    label: '離線中（恢復連線後自動補送）',
+    tip: '目前無法連上雲端，修改會先存在本機，網路恢復後自動上傳',
+    badge: 'bg-amber-50 text-amber-700 border-amber-200',
+    dot: 'bg-amber-500',
+    tag: 'bg-amber-100 text-amber-800'
+  },
+  error: {
+    label: '同步失敗',
+    tip: '無法寫入雲端資料庫',
+    badge: 'bg-rose-50 text-rose-700 border-rose-200',
+    dot: 'bg-rose-500',
+    tag: 'bg-rose-100 text-rose-800'
+  }
+};
 
 export const EventHeader: React.FC<EventHeaderProps> = ({
   eventInfo,
@@ -25,8 +66,11 @@ export const EventHeader: React.FC<EventHeaderProps> = ({
   checkedInCount,
   totalExpectedCount,
   myDeviceId,
-  lastSyncInfo
+  lastSyncInfo,
+  syncStatus = 'connecting',
+  syncError
 }) => {
+  const sync = SYNC_BADGE[syncStatus];
   const percentage = totalExpectedCount > 0 ? Math.round((checkedInCount / totalExpectedCount) * 100) : 0;
 
   return (
@@ -41,11 +85,14 @@ export const EventHeader: React.FC<EventHeaderProps> = ({
                   <Sparkles className="w-3 h-3 text-blue-500" />
                   苗栗縣三義鄉公所 · 簽到與簽退系統
                 </span>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200" title="手機與電腦任何一方更新，系統皆會以最新時間為準自動同步">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span>雙端最新資料自動同步</span>
+                <span
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${sync.badge}`}
+                  title={syncError ? `${sync.tip}：${syncError}` : sync.tip}
+                >
+                  <span className={`w-2 h-2 rounded-full ${sync.dot}`} />
+                  <span>{sync.label}</span>
                   {myDeviceId && (
-                    <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-medium">
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${sync.tag}`}>
                       本機: {myDeviceId}
                     </span>
                   )}
@@ -56,6 +103,12 @@ export const EventHeader: React.FC<EventHeaderProps> = ({
                   </span>
                 )}
               </div>
+
+              {syncStatus === 'error' && syncError && (
+                <div className="mt-1.5 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-1">
+                  ⚠️ {syncError}
+                </div>
+              )}
 
               <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight mt-1 truncate">
                 {eventInfo.title}

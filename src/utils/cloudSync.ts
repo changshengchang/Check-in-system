@@ -1,25 +1,11 @@
 import { EventInfo, RegisteredParticipant, CheckInRecord } from '../types';
 
-export interface SyncPayload {
-  eventInfo: EventInfo;
-  roster: RegisteredParticipant[];
-  checkIns: CheckInRecord[];
-  updatedAt: number; // millisecond timestamp: Date.now()
-  lastModifiedBy: string; // e.g. "手機端-7A2B" or "電腦端-9X4C"
-  actionDescription?: string; // e.g. "學員報到: 張淑珍"
-}
-
-const KVDB_BUCKET = 'CrJjmEhDSTVdfJwSimtxNm';
-export const CANONICAL_ROOM_KEY = 'training-event-4820472b';
-export const LEGACY_ROOM_KEY = 'event-2026-training-main';
-export const DEFAULT_ROOM_KEY = CANONICAL_ROOM_KEY;
-
-// Proactively purge any divergent room keys saved in localStorage
-try {
-  localStorage.removeItem('training_app_cloud_room_id');
-} catch {
-  // ignore
-}
+/**
+ * 跨裝置同步已改用 Firebase Firestore (見 ./firebase.ts)。
+ * 這個檔案只保留：
+ *   1. 裝置代號 (顯示「最新更新來自 手機端-XXXX」)
+ *   2. 讀取舊系統 kvdb.io 的最後一份資料，只在 Firebase 第一次建立資料時用來搬移舊紀錄
+ */
 
 export function getDeviceId(): string {
   try {
@@ -37,99 +23,30 @@ export function getDeviceId(): string {
   }
 }
 
-export function getCloudRoomId(): string {
-  // Always use canonical room key so mobile and desktop never talk to separate channels
-  return CANONICAL_ROOM_KEY;
+export interface LegacyCloudData {
+  eventInfo: EventInfo;
+  roster: RegisteredParticipant[];
+  checkIns: CheckInRecord[];
 }
 
-export function setCloudRoomId(_newRoomId: string) {
-  // Intentionally locked to CANONICAL_ROOM_KEY to prevent device divergence
-}
+const LEGACY_KVDB_URL = 'https://kvdb.io/CrJjmEhDSTVdfJwSimtxNm/training-event-4820472b';
 
-/**
- * Normalize incoming payload timestamp (handles both millisecond number and legacy ISO string)
- */
-function normalizePayload(data: any): SyncPayload | null {
-  if (!data || typeof data !== 'object') return null;
-
-  let updatedAtMs = 0;
-  if (typeof data.updatedAt === 'number') {
-    updatedAtMs = data.updatedAt;
-  } else if (typeof data.updatedAt === 'string') {
-    const parsed = new Date(data.updatedAt).getTime();
-    if (!isNaN(parsed)) updatedAtMs = parsed;
-  }
-
-  if (updatedAtMs <= 0) return null;
-
-  return {
-    eventInfo: data.eventInfo,
-    roster: Array.isArray(data.roster) ? data.roster : [],
-    checkIns: Array.isArray(data.checkIns) ? data.checkIns : [],
-    updatedAt: updatedAtMs,
-    lastModifiedBy: data.lastModifiedBy || '遠端裝置',
-    actionDescription: data.actionDescription || '更新資料'
-  };
-}
-
-/**
- * Pull latest data from KVDB cloud storage.
- * Using a simple GET with a query timestamp '?t=...' bypasses browser caching with zero CORS preflight.
- */
-export async function fetchFromCloudRelay(roomId: string = CANONICAL_ROOM_KEY): Promise<SyncPayload | null> {
+/** 讀取舊 kvdb 雲端資料 (只讀一次，失敗就回傳 null) */
+export async function fetchLegacyCloudData(): Promise<LegacyCloudData | null> {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-
-    const url = `https://kvdb.io/${KVDB_BUCKET}/${encodeURIComponent(roomId)}?t=${Date.now()}`;
-    const res = await fetch(url, {
-      signal: controller.signal
-    });
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(`${LEGACY_KVDB_URL}?t=${Date.now()}`, { signal: controller.signal });
     clearTimeout(timeoutId);
-
     if (!res.ok) return null;
-    const raw = await res.json();
-    return normalizePayload(raw);
-  } catch (err) {
-    // Silent warn on expected network jitter
+    const data = await res.json();
+    if (!data || typeof data !== 'object' || !data.eventInfo) return null;
+    return {
+      eventInfo: data.eventInfo,
+      roster: Array.isArray(data.roster) ? data.roster : [],
+      checkIns: Array.isArray(data.checkIns) ? data.checkIns : []
+    };
+  } catch {
     return null;
   }
-}
-
-/**
- * Push data to KVDB cloud storage.
- * Synchronously pushes to CANONICAL_ROOM_KEY and simultaneously replicates to LEGACY_ROOM_KEY
- * so any older client still running cached code receives the update immediately.
- */
-export async function pushToCloudRelay(roomId: string = CANONICAL_ROOM_KEY, payload: SyncPayload): Promise<boolean> {
-  const body = JSON.stringify(payload);
-
-  const pushToTarget = async (targetKey: string): Promise<boolean> => {
-    const url = `https://kvdb.io/${KVDB_BUCKET}/${encodeURIComponent(targetKey)}`;
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body,
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-      return res.ok;
-    } catch {
-      return false;
-    }
-  };
-
-  // Push to canonical room
-  const success = await pushToTarget(roomId);
-
-  // Cross-replicate to legacy room in background if roomId is canonical
-  if (roomId === CANONICAL_ROOM_KEY) {
-    pushToTarget(LEGACY_ROOM_KEY).catch(() => {});
-  }
-
-  return success;
 }

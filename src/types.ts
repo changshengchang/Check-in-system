@@ -60,7 +60,13 @@ export interface CheckInRecord {
   compTimeMinutes?: number; // 核予補休時間 ("參加時間" + "路途時間" - "扣除時間"，單位分鐘)
   compTimeDisplay?: string; // 核予補休時間文字
   customFields?: Record<string, string>; // 學員名冊所屬之自訂欄位
+  // Firebase 同步資訊 (最後由哪台裝置、何時、做了什麼修改)
+  syncUpdatedAt?: number;
+  syncModifiedBy?: string;
+  syncAction?: string;
 }
+
+export type SyncStatus = 'connecting' | 'synced' | 'pending' | 'offline' | 'error';
 
 export type AttendeeStatus = 'CHECKED_IN' | 'NOT_CHECKED_IN' | 'WALK_IN';
 
