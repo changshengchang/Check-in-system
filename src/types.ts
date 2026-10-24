@@ -16,6 +16,15 @@ export interface EventInfo {
   // 附件1 (報到手續完成畫面) 欄位顯示設定
   completionDisplayFields?: string[]; // 勾選要呈現於報到完成畫面的名冊欄位清單
   availableRosterColumns?: string[]; // 名冊目前所有可用欄位
+  // 開放時段：學員只能在時段內送出簽到 / 簽退 (承辦人後台操作不受限制)
+  checkInWindow?: SubmitWindow;
+  checkOutWindow?: SubmitWindow;
+}
+
+export interface SubmitWindow {
+  enabled: boolean; // false = 不限制，隨時可送出
+  startMs?: number; // 開始時間 (毫秒時間戳)，未設定 = 立即開放
+  endMs?: number; // 截止時間 (毫秒時間戳)，未設定 = 不截止
 }
 
 export interface RegisteredParticipant {
@@ -64,6 +73,7 @@ export interface CheckInRecord {
   syncUpdatedAt?: number;
   syncModifiedBy?: string;
   syncAction?: string;
+  syncSource?: 'student' | 'organizer';
 }
 
 export type SyncStatus = 'connecting' | 'synced' | 'pending' | 'offline' | 'error';

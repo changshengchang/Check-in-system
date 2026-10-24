@@ -5,7 +5,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { onSnapshot, type SnapshotMetadata } from 'firebase/firestore';
-import { EventInfo, RegisteredParticipant, CheckInRecord, SyncStatus } from './types';
+import { EventInfo, RegisteredParticipant, CheckInRecord, SyncStatus, SubmitWindow } from './types';
+import { syncServerClock } from './utils/submitWindow';
 import {
   loadEventInfo,
   saveEventInfo,
@@ -46,8 +47,13 @@ function statusFromMetadata(m: SnapshotMetadata): SyncStatus {
   return 'synced';
 }
 
-function describeSyncError(err: unknown): string {
+type SubmitContext = 'checkin' | 'checkout';
+
+function describeSyncError(err: unknown, submit?: SubmitContext): string {
   const code = (err as { code?: string })?.code || '';
+  if (code === 'permission-denied' && submit) {
+    return `送出失敗：目前不在${submit === 'checkin' ? '簽到' : '簽退'}開放時段內（以伺服器時間為準），如需補登請洽承辦人員`;
+  }
   if (code === 'permission-denied') return '雲端拒絕這次修改：該紀錄可能已被其他裝置取消或刪除，請重新整理畫面後再試';
   if (code === 'unavailable') return '目前無法連上雲端，請檢查網路後再試一次';
   if (code === 'not-found') return '找不到這筆紀錄，可能已被其他裝置刪除';
@@ -89,7 +95,7 @@ export default function App() {
     if (!updatedAt || updatedAt <= lastSyncInfoAtRef.current) return;
     lastSyncInfoAtRef.current = updatedAt;
     setLastSyncInfo({
-      time: new Date(updatedAt).toLocaleTimeString('zh-TW', { hour12: false }),
+      time: new Date(updatedAt).toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' }),
       device: device || '遠端裝置',
       action: action || '更新資料'
     });
@@ -97,6 +103,9 @@ export default function App() {
 
   // 即時同步：Firestore 有任何變動會主動推送到所有裝置，不需要輪詢
   useEffect(() => {
+    // 校正本機時鐘，開放時段以伺服器時間為準
+    syncServerClock();
+
     const parts: Record<'event' | 'checkIns', SyncStatus> = { event: 'connecting', checkIns: 'connecting' };
     const refreshStatus = () => {
       const all = Object.values(parts);
@@ -178,14 +187,20 @@ export default function App() {
   }, []);
 
   // 執行雲端寫入；失敗時顯示錯誤並 (必要時) 還原畫面
-  const runSync = (promise: Promise<unknown>, onFail?: () => void) => {
+  // 回傳 null = 成功；字串 = 失敗原因 (給簽到/簽退頁顯示)
+  const runSync = (promise: Promise<unknown>, onFail?: () => void, submit?: SubmitContext): Promise<string | null> => {
     setSyncError(null);
-    promise.catch(err => {
-      console.error('[Firebase] Write failed:', err);
-      setSyncError(describeSyncError(err));
-      setSyncStatus('error');
-      onFail?.();
-    });
+    return promise.then(
+      () => null,
+      err => {
+        console.error('[Firebase] Write failed:', err);
+        const message = describeSyncError(err, submit);
+        setSyncError(message);
+        setSyncStatus('error');
+        onFail?.();
+        return message;
+      }
+    );
   };
 
   // 活動資訊與名冊：先更新畫面，再以交易寫入雲端 (以雲端最新名冊為基礎套用修改)
@@ -244,18 +259,39 @@ export default function App() {
   };
 
   // 1. 修改活動資訊
+  // 開放時段只由 handleUpdateSubmitWindow 修改，這裡保留雲端上的設定，
+  // 避免編輯活動資訊時用畫面上的舊資料蓋掉另一台裝置剛改的時段
   const handleUpdateEventInfo = (updated: EventInfo) => {
-    runEventMutation('修改活動資訊', cur => ({ ...cur, eventInfo: updated }));
+    runEventMutation('修改活動資訊', cur => ({
+      ...cur,
+      eventInfo: {
+        ...updated,
+        checkInWindow: cur.eventInfo.checkInWindow,
+        checkOutWindow: cur.eventInfo.checkOutWindow
+      }
+    }));
+  };
+
+  // 1b. 設定簽到 / 簽退開放時段 (只改這一個欄位)
+  const handleUpdateSubmitWindow = (kind: 'checkin' | 'checkout', window: SubmitWindow) => {
+    const key = kind === 'checkin' ? 'checkInWindow' : 'checkOutWindow';
+    const label = kind === 'checkin' ? '簽到' : '簽退';
+    const desc = !window.enabled ? `取消${label}時段限制` : `設定${label}開放時段`;
+    runEventMutation(desc, cur => ({ ...cur, eventInfo: { ...cur.eventInfo, [key]: window } }));
   };
 
   // 2. 學員簽到 (同一人已有紀錄時，覆蓋原本那筆)
-  const handleCheckInSuccess = (record: CheckInRecord) => {
+  const handleCheckInSuccess = (record: CheckInRecord, source: 'student' | 'organizer' = 'student') => {
     const cleanName = record.name.trim().toLowerCase();
     const existing = checkIns.find(
       c => (record.participantId && c.participantId === record.participantId) ||
            c.name.trim().toLowerCase() === cleanName
     );
-    runSync(writeCheckIn({ ...record, id: existing ? existing.id : record.id }, `學員報到: ${record.name}`));
+    return runSync(
+      writeCheckIn({ ...record, id: existing ? existing.id : record.id }, `學員報到: ${record.name}`, source),
+      undefined,
+      source === 'student' ? 'checkin' : undefined
+    );
   };
 
   // 3. 匯入名冊 (Excel/CSV)
@@ -318,7 +354,7 @@ export default function App() {
       ctx.textAlign = 'center';
       ctx.fillText('承辦人員現場核驗報到', 120, 36);
       ctx.font = '11px sans-serif';
-      ctx.fillText(new Date().toLocaleTimeString('zh-TW', { hour12: false }), 120, 56);
+      ctx.fillText(new Date().toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' }), 120, 56);
     }
 
     const stampDataUrl = canvas.toDataURL('image/jpeg', 0.8);
@@ -337,7 +373,7 @@ export default function App() {
       notes: '活動承辦人手動協助報到'
     };
 
-    handleCheckInSuccess(newRecord);
+    handleCheckInSuccess(newRecord, 'organizer');
   };
 
   // 6b. 學員簽退 (參加時間 + 路途時間 - 扣除時間)
@@ -371,7 +407,7 @@ export default function App() {
     const actualCompTime = typeof compTimeMinutes === 'number' ? compTimeMinutes : compResult.compMinutes;
     const actualCompDisplay = compTimeDisplay || compResult.compDisplay;
 
-    runSync(updateCheckIn(checkInId, {
+    return runSync(updateCheckIn(checkInId, {
       checkOutTime,
       checkOutSignatureDataUrl: signatureDataUrl,
       durationMinutes,
@@ -383,7 +419,7 @@ export default function App() {
       deductionReason: actualDeductionReason,
       compTimeMinutes: actualCompTime,
       compTimeDisplay: actualCompDisplay
-    }, `學員簽退: ${participantName} (${durationDisplay})`));
+    }, `學員簽退: ${participantName} (${durationDisplay})`, 'student'), undefined, 'checkout');
   };
 
   // 6c. 承辦人從後台協助簽退
@@ -425,7 +461,7 @@ export default function App() {
       ctx.textAlign = 'center';
       ctx.fillText('承辦人員現場協助簽退', 120, 36);
       ctx.font = '11px sans-serif';
-      ctx.fillText(new Date().toLocaleTimeString('zh-TW', { hour12: false }), 120, 56);
+      ctx.fillText(new Date().toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' }), 120, 56);
     }
     const stampDataUrl = canvas.toDataURL('image/jpeg', 0.8);
 
@@ -442,7 +478,7 @@ export default function App() {
       compTimeMinutes: compResult.compMinutes,
       compTimeDisplay: compResult.compDisplay,
       notes: checkInRecord.notes ? `${checkInRecord.notes} / 承辦人協助簽退` : '承辦人協助簽退'
-    }, `承辦人協助簽退: ${target.name}`));
+    }, `承辦人協助簽退: ${target.name}`, 'organizer'));
   };
 
   // 6d. 更新個別學員的路途時間
@@ -460,7 +496,7 @@ export default function App() {
           travelDisplay: formatMinutesDisplay(minutes),
           compTimeMinutes: compResult.compMinutes,
           compTimeDisplay: compResult.compDisplay
-        }, action));
+        }, action, 'organizer'));
       });
 
     runEventMutation(action, base => ({
@@ -503,14 +539,14 @@ export default function App() {
             runSync(updateCheckIn(c.id, {
               checkOutHrVerified: nextVerified,
               checkOutHrVerifiedAt: nextVerified ? nowIso : undefined
-            }, action));
+            }, action, 'organizer'));
           } else {
             const nextVerified = !(c.checkInHrVerified ?? c.hrVerified);
             runSync(updateCheckIn(c.id, {
               checkInHrVerified: nextVerified,
               hrVerified: nextVerified,
               checkInHrVerifiedAt: nextVerified ? nowIso : undefined
-            }, action));
+            }, action, 'organizer'));
           }
         });
       return;
@@ -535,7 +571,7 @@ export default function App() {
       ctx.textAlign = 'center';
       ctx.fillText('人事單位現場簽到覆核', 120, 36);
       ctx.font = '11px sans-serif';
-      ctx.fillText(now.toLocaleTimeString('zh-TW', { hour12: false }), 120, 56);
+      ctx.fillText(now.toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' }), 120, 56);
     }
     const stampDataUrl = canvas.toDataURL('image/jpeg', 0.8);
 
@@ -552,7 +588,7 @@ export default function App() {
       hrVerified: true,
       checkInHrVerifiedAt: now.toISOString(),
       notes: '人事單位現場直接簽到覆核'
-    }, action));
+    }, action, 'organizer'));
   };
 
   // Combined real-time attendee comparison list (傳入 eventInfo 完整包含路途時間與扣除時間設定)
@@ -607,6 +643,7 @@ export default function App() {
             checkIns={checkIns}
             attendees={combinedAttendees}
             onUpdateEventInfo={handleUpdateEventInfo}
+            onUpdateSubmitWindow={handleUpdateSubmitWindow}
             onImportRoster={handleImportRoster}
             onAddRosterParticipant={handleAddRosterParticipant}
             onDeleteRosterParticipant={handleDeleteRosterParticipant}

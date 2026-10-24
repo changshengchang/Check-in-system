@@ -2,6 +2,8 @@ import React, { useState, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import { CheckInRecord, EventInfo, RegisteredParticipant } from '../types';
 import { SignaturePad, SignaturePadHandle } from './SignaturePad';
+import { SubmitWindowNotice, getWindowBlockedMessage } from './SubmitWindowNotice';
+import { useSubmitWindow, getWindowStatus, serverNow } from '../utils/submitWindow';
 import {
   UserCheck,
   CheckCircle2,
@@ -22,7 +24,8 @@ interface CheckInFormProps {
   eventInfo: EventInfo;
   roster: RegisteredParticipant[];
   existingCheckIns: CheckInRecord[];
-  onCheckInSuccess: (record: CheckInRecord) => void;
+  /** 回傳 Promise：null = 雲端已接受；字串 = 被拒絕的原因 */
+  onCheckInSuccess: (record: CheckInRecord) => Promise<string | null> | void;
   onNavigateToDashboard: () => void;
 }
 
@@ -52,6 +55,9 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
   } | null>(null);
 
   const signaturePadRef = useRef<SignaturePadHandle | null>(null);
+
+  // 簽到開放時段 (承辦人於後台設定，時段外不可送出)
+  const windowStatus = useSubmitWindow(eventInfo.checkInWindow);
 
   // Already checked in IDs/names
   const checkedInIds = new Set(existingCheckIns.map(c => c.participantId).filter(Boolean));
@@ -113,6 +119,13 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
       return;
     }
 
+    // 送出當下再以伺服器時間確認一次開放時段
+    const windowNow = getWindowStatus(eventInfo.checkInWindow, serverNow());
+    if (!windowNow.canSubmit) {
+      setErrorMessage(getWindowBlockedMessage(windowNow, 'checkin'));
+      return;
+    }
+
     // Requirement 4: Duplicate Check-In verification (重複簽到定義:已完成簽到名冊中如已有相同姓名,則視為重複簽到)
     const duplicateRecord = existingCheckIns.find(
       c => c.name.trim().toLowerCase() === trimmedName.toLowerCase() ||
@@ -121,7 +134,7 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
 
     if (duplicateRecord) {
       const timeStr = duplicateRecord.checkInTime
-        ? new Date(duplicateRecord.checkInTime).toLocaleTimeString('zh-TW', { hour12: false })
+        ? new Date(duplicateRecord.checkInTime).toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' })
         : '今日稍早';
       const dupMsg = `【重複簽到警示】「${trimmedName}」已於 ${timeStr} 完成活動簽到，系統判定為重複簽到，已拒絕送出！`;
       setErrorMessage(dupMsg);
@@ -174,7 +187,12 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
       // ignore
     }
 
-    onCheckInSuccess(newRecord);
+    // 雲端若拒絕 (例如手機時間不準、實際已超過截止時間)，收回成功畫面並顯示原因
+    Promise.resolve(onCheckInSuccess(newRecord)).then(rejectReason => {
+      if (!rejectReason) return;
+      setRecentCheckedIn(cur => (cur && cur.id === newRecord.id ? null : cur));
+      setErrorMessage(`「${newRecord.name}」${rejectReason}`);
+    });
     setRecentCheckedIn(newRecord);
     setIsSubmitting(false);
   };
@@ -440,12 +458,19 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
             </div>
           )}
 
+          {/* 開放時段提示 */}
+          <SubmitWindowNotice status={windowStatus} kind="checkin" />
+
           {/* Action Button */}
           <div className="pt-2">
             <button
               type="submit"
-              disabled={isSubmitting}
-              className="w-full py-3.5 px-6 rounded-xl font-bold text-white text-base bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
+              disabled={isSubmitting || !windowStatus.canSubmit}
+              className={`w-full py-3.5 px-6 rounded-xl font-bold text-white text-base shadow-md transition-all flex items-center justify-center gap-2 ${
+                windowStatus.canSubmit
+                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 hover:shadow-lg cursor-pointer active:scale-[0.99]'
+                  : 'bg-slate-400 cursor-not-allowed'
+              }`}
             >
               <CheckCircle2 className="w-5 h-5" />
               <span>確認送出並完成活動報到</span>
@@ -484,7 +509,7 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
               <div className="flex justify-between items-center py-1 border-b border-slate-200">
                 <span className="text-slate-500">報到時間</span>
                 <span className="font-mono text-slate-700">
-                  {new Date(recentCheckedIn.checkInTime).toLocaleTimeString('zh-TW', { hour12: false })}
+                  {new Date(recentCheckedIn.checkInTime).toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' })}
                 </span>
               </div>
               <div className="flex justify-between items-center py-1 border-b border-slate-200">

@@ -66,12 +66,19 @@ export interface EventDocData {
   actionDescription?: string;
 }
 
+/**
+ * 寫入來源：student = 學員在簽到/簽退頁送出 (受開放時段限制)；
+ * organizer = 承辦人後台操作 (補登、覆核等，不受開放時段限制)
+ */
+export type WriteSource = 'student' | 'organizer';
+
 /** 每筆寫入都附上「誰、何時、做了什麼」，供其他裝置顯示最新更新來源 */
-function syncMeta(action: string) {
+function syncMeta(action: string, source: WriteSource) {
   return {
     syncUpdatedAt: Date.now(),
     syncModifiedBy: getDeviceId(),
-    syncAction: action
+    syncAction: action,
+    syncSource: source
   };
 }
 
@@ -85,13 +92,13 @@ function toUpdatePayload(fields: Record<string, unknown>): Record<string, unknow
 }
 
 /** 新增或整筆取代一筆簽到紀錄 */
-export function writeCheckIn(record: CheckInRecord, action: string) {
-  return setDoc(checkInDocRef(record.id), { ...record, ...syncMeta(action) });
+export function writeCheckIn(record: CheckInRecord, action: string, source: WriteSource) {
+  return setDoc(checkInDocRef(record.id), { ...record, ...syncMeta(action, source) });
 }
 
 /** 只更新一筆簽到紀錄的部分欄位 (簽退、覆核、路途時間) */
-export function updateCheckIn(id: string, fields: Partial<CheckInRecord>, action: string) {
-  return updateDoc(checkInDocRef(id), toUpdatePayload({ ...fields, ...syncMeta(action) }));
+export function updateCheckIn(id: string, fields: Partial<CheckInRecord>, action: string, source: WriteSource) {
+  return updateDoc(checkInDocRef(id), toUpdatePayload({ ...fields, ...syncMeta(action, source) }));
 }
 
 /** 刪除多筆簽到紀錄，並在活動文件記錄這次動作讓其他裝置看到 */
@@ -169,7 +176,7 @@ export async function ensureEventSeeded(getSeed: () => Promise<EventDocData & { 
   if (created && seed.checkIns.length > 0) {
     const batch = writeBatch(db);
     seed.checkIns.slice(0, 450).forEach(c => {
-      batch.set(checkInDocRef(c.id), { ...c, ...syncMeta('匯入舊系統簽到紀錄') });
+      batch.set(checkInDocRef(c.id), { ...c, ...syncMeta('匯入舊系統簽到紀錄', 'organizer') });
     });
     await batch.commit();
   }

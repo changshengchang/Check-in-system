@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import confetti from 'canvas-confetti';
 import { CheckInRecord, EventInfo, CombinedAttendeeView } from '../types';
 import { SignaturePad, SignaturePadHandle } from './SignaturePad';
+import { SubmitWindowNotice, getWindowBlockedMessage } from './SubmitWindowNotice';
+import { useSubmitWindow, getWindowStatus, serverNow } from '../utils/submitWindow';
 import {
   calculateParticipationDuration,
   calculateCompTime,
@@ -44,7 +46,7 @@ interface CheckOutFormProps {
     deductionMinutes?: number,
     deductionDisplay?: string,
     deductionReason?: string
-  ) => void;
+  ) => Promise<string | null> | void;
   onToggleHrVerify?: (attendeeId: string, type?: 'checkin' | 'checkout') => void;
   onNavigateToDashboard: () => void;
   onNavigateToCheckIn: () => void;
@@ -99,6 +101,9 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
 
   const signaturePadRef = useRef<SignaturePadHandle | null>(null);
 
+  // 簽退開放時段 (承辦人於後台設定，時段外不可送出)
+  const windowStatus = useSubmitWindow(eventInfo.checkOutWindow);
+
   // Live timer tick for accurate duration preview
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -128,7 +133,7 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
     setErrorMessage('');
 
     if (a.checkOutTime) {
-      setErrorMessage(`【重複簽退警示】「${a.name}」已於 ${new Date(a.checkOutTime).toLocaleTimeString('zh-TW', { hour12: false })} 完成過簽退，送出時系統將拒絕重複簽退！`);
+      setErrorMessage(`【重複簽退警示】「${a.name}」已於 ${new Date(a.checkOutTime).toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' })} 完成過簽退，送出時系統將拒絕重複簽退！`);
     }
   };
 
@@ -173,6 +178,13 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
       return;
     }
 
+    // 送出當下再以伺服器時間確認一次開放時段
+    const windowNow = getWindowStatus(eventInfo.checkOutWindow, serverNow());
+    if (!windowNow.canSubmit) {
+      setErrorMessage(getWindowBlockedMessage(windowNow, 'checkout'));
+      return;
+    }
+
     // Requirement 4: Duplicate Check-Out verification
     // 重複簽退定義: 已完成簽退名冊中如已有相同姓名且已簽退，出現重複簽退訊息並拒絕送出
     const duplicateCheckOut = attendees.find(
@@ -181,7 +193,7 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
 
     if (duplicateCheckOut) {
       const timeStr = duplicateCheckOut.checkOutTime
-        ? new Date(duplicateCheckOut.checkOutTime).toLocaleTimeString('zh-TW', { hour12: false })
+        ? new Date(duplicateCheckOut.checkOutTime).toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' })
         : '今日稍早';
       const dupMsg = `【重複簽退警示】「${selectedAttendee.name}」已於 ${timeStr} 完成簽退，系統判定為重複簽退，已拒絕送出！`;
       setErrorMessage(dupMsg);
@@ -231,7 +243,8 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
       // ignore
     }
 
-    onCheckOutSuccess(
+    const submittedName = selectedAttendee.name;
+    const submitResult = onCheckOutSuccess(
       targetCheckInId,
       nowIso,
       signatureDataUrl,
@@ -245,6 +258,13 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
       deductionDisplay,
       deductionReason
     );
+
+    // 雲端若拒絕 (例如手機時間不準、實際已超過截止時間)，收回成功畫面並顯示原因
+    Promise.resolve(submitResult).then(rejectReason => {
+      if (!rejectReason) return;
+      setRecentCheckedOut(cur => (cur && cur.name === submittedName && cur.checkOutTime === nowIso ? null : cur));
+      setErrorMessage(`「${submittedName}」${rejectReason}`);
+    });
 
     setRecentCheckedOut({
       name: selectedAttendee.name,
@@ -296,7 +316,7 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
             </div>
             <div className="flex items-center gap-1.5">
               <Clock className="w-4 h-4 text-amber-300 shrink-0" />
-              <span>當前時間：{currentTime.toLocaleTimeString('zh-TW', { hour12: false })}</span>
+              <span>當前時間：{currentTime.toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' })}</span>
             </div>
             <div className="flex items-center gap-1.5">
               <MapPin className="w-4 h-4 text-amber-300 shrink-0" />
@@ -442,7 +462,7 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-[11px] text-slate-500 font-mono">
-                        簽到: {p.checkInTime ? new Date(p.checkInTime).toLocaleTimeString('zh-TW', { hour12: false }) : '—'}
+                        簽到: {p.checkInTime ? new Date(p.checkInTime).toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' }) : '—'}
                       </span>
                       {p.checkOutTime ? (
                         <span className="text-[11px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-medium">
@@ -511,12 +531,12 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
                   </div>
                   <div className="text-base font-extrabold text-slate-800 font-mono mt-1">
                     {selectedAttendee.checkInTime
-                      ? new Date(selectedAttendee.checkInTime).toLocaleTimeString('zh-TW', { hour12: false })
+                      ? new Date(selectedAttendee.checkInTime).toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' })
                       : '—'}
                   </div>
                   <div className="text-[10px] text-slate-400 mt-0.5">
                     {selectedAttendee.checkInTime
-                      ? new Date(selectedAttendee.checkInTime).toLocaleDateString('zh-TW')
+                      ? new Date(selectedAttendee.checkInTime).toLocaleDateString('zh-TW', { timeZone: 'Asia/Taipei' })
                       : ''}
                   </div>
                 </div>
@@ -528,7 +548,7 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
                     <span>簽退時間</span>
                   </div>
                   <div className="text-base font-extrabold text-amber-700 font-mono mt-1">
-                    {currentTime.toLocaleTimeString('zh-TW', { hour12: false })}
+                    {currentTime.toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' })}
                   </div>
                   <div className="text-[10px] text-amber-600 font-medium mt-0.5">
                     即時系統簽退時間
@@ -626,12 +646,19 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
             </div>
           )}
 
+          {/* 開放時段提示 */}
+          <SubmitWindowNotice status={windowStatus} kind="checkout" />
+
           {/* Submit Action */}
           <div className="pt-2">
             <button
               type="submit"
-              disabled={isSubmitting}
-              className="w-full py-4 px-6 rounded-xl font-bold text-white text-base bg-gradient-to-r from-amber-600 via-orange-600 to-amber-700 hover:from-amber-700 hover:to-orange-700 shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
+              disabled={isSubmitting || !windowStatus.canSubmit}
+              className={`w-full py-4 px-6 rounded-xl font-bold text-white text-base shadow-md transition-all flex items-center justify-center gap-2 ${
+                windowStatus.canSubmit
+                  ? 'bg-gradient-to-r from-amber-600 via-orange-600 to-amber-700 hover:from-amber-700 hover:to-orange-700 hover:shadow-lg cursor-pointer active:scale-[0.99]'
+                  : 'bg-slate-400 cursor-not-allowed'
+              }`}
             >
               <LogOut className="w-5 h-5" />
               <span>確認送出並完成活動簽退 (結算參加時間與補休)</span>
@@ -671,13 +698,13 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
               <div className="flex justify-between items-center py-1 border-b border-amber-200/80">
                 <span className="text-slate-500">簽到時間</span>
                 <span className="font-mono text-slate-700 font-bold">
-                  {new Date(recentCheckedOut.checkInTime).toLocaleTimeString('zh-TW', { hour12: false })}
+                  {new Date(recentCheckedOut.checkInTime).toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' })}
                 </span>
               </div>
               <div className="flex justify-between items-center py-1 border-b border-amber-200/80">
                 <span className="text-slate-500">簽退時間</span>
                 <span className="font-mono text-amber-800 font-bold">
-                  {new Date(recentCheckedOut.checkOutTime).toLocaleTimeString('zh-TW', { hour12: false })}
+                  {new Date(recentCheckedOut.checkOutTime).toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' })}
                 </span>
               </div>
               <div className="flex justify-between items-center py-1 border-b border-amber-200/80">

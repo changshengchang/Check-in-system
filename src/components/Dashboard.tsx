@@ -3,7 +3,8 @@ import {
   CombinedAttendeeView,
   EventInfo,
   RegisteredParticipant,
-  CheckInRecord
+  CheckInRecord,
+  SubmitWindow
 } from '../types';
 import { exportToExcel, exportToCsv } from '../utils/excel';
 import { FileUploader } from './FileUploader';
@@ -43,6 +44,7 @@ import {
   Square
 } from 'lucide-react';
 
+import { SubmitWindowPanel } from './SubmitWindowPanel';
 interface DashboardProps {
   eventInfo: EventInfo;
   roster: RegisteredParticipant[];
@@ -59,6 +61,7 @@ interface DashboardProps {
   onManualCheckIn: (attendee: CombinedAttendeeView) => void;
   onManualCheckOut: (attendeeId: string) => void;
   onUpdateEventInfo: (info: EventInfo) => void;
+  onUpdateSubmitWindow?: (kind: 'checkin' | 'checkout', window: SubmitWindow) => void;
   onUpdateTravelTime?: (attendeeId: string, minutes: number) => void;
   onRemoveCheckIn: (attendeeId: string, checkInId?: string, attendeeName?: string) => void;
   onResetAllCheckIns: () => void;
@@ -79,6 +82,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onManualCheckIn,
   onManualCheckOut,
   onUpdateEventInfo,
+  onUpdateSubmitWindow,
   onUpdateTravelTime,
   onRemoveCheckIn,
   onResetAllCheckIns,
@@ -216,7 +220,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             報名名冊與報到比對概況
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            活動：{eventInfo.title} · 最後更新於 {new Date().toLocaleTimeString('zh-TW', { hour12: false })}
+            活動：{eventInfo.title} · 最後更新於 {new Date().toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' })}
           </p>
         </div>
 
@@ -389,6 +393,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
         </div>
       </div>
+
+      {/* 簽到／簽退開放時段設定 */}
+      {onUpdateSubmitWindow && (
+        <SubmitWindowPanel eventInfo={eventInfo} onUpdateSubmitWindow={onUpdateSubmitWindow} />
+      )}
 
       {/* Main Tabbed Area */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
@@ -795,9 +804,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             <td className="py-3 px-3 text-center font-mono text-slate-600 text-[11px]">
                               {attendee.checkInTime ? (
                                 <div>
-                                  <div>{new Date(attendee.checkInTime).toLocaleDateString('zh-TW')}</div>
+                                  <div>{new Date(attendee.checkInTime).toLocaleDateString('zh-TW', { timeZone: 'Asia/Taipei' })}</div>
                                   <div className="font-bold text-slate-800">
-                                    {new Date(attendee.checkInTime).toLocaleTimeString('zh-TW', { hour12: false })}
+                                    {new Date(attendee.checkInTime).toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' })}
                                   </div>
                                 </div>
                               ) : (
@@ -809,9 +818,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             <td className="py-3 px-3 text-center font-mono text-slate-600 text-[11px]">
                               {attendee.checkOutTime ? (
                                 <div>
-                                  <div>{new Date(attendee.checkOutTime).toLocaleDateString('zh-TW')}</div>
+                                  <div>{new Date(attendee.checkOutTime).toLocaleDateString('zh-TW', { timeZone: 'Asia/Taipei' })}</div>
                                   <div className="font-bold text-amber-700">
-                                    {new Date(attendee.checkOutTime).toLocaleTimeString('zh-TW', { hour12: false })}
+                                    {new Date(attendee.checkOutTime).toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' })}
                                   </div>
                                 </div>
                               ) : isChecked ? (
@@ -1095,7 +1104,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </h3>
                 <p className="text-xs text-slate-500">
                   {selectedSignature.title} · 報到時間：
-                  {selectedSignature.time ? new Date(selectedSignature.time).toLocaleString('zh-TW', { hour12: false }) : '—'}
+                  {selectedSignature.time ? new Date(selectedSignature.time).toLocaleString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' }) : '—'}
                 </p>
               </div>
               <button
