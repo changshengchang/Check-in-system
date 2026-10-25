@@ -233,12 +233,12 @@ export const PrintableView: React.FC<PrintableViewProps> = ({
                     </td>
                     {showCheckInTime && (
                       <td className="py-2 px-2 text-center font-mono text-[11px] text-slate-600">
-                        {a.checkInTime ? new Date(a.checkInTime).toLocaleTimeString('zh-TW', { hour12: false }) : '—'}
+                        {a.checkInTime ? new Date(a.checkInTime).toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' }) : '—'}
                       </td>
                     )}
                     {showCheckOutTime && (
                       <td className="py-2 px-2 text-center font-mono text-[11px] text-slate-600">
-                        {a.checkOutTime ? new Date(a.checkOutTime).toLocaleTimeString('zh-TW', { hour12: false }) : isDone ? '未簽退' : '—'}
+                        {a.checkOutTime ? new Date(a.checkOutTime).toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' }) : isDone ? '未簽退' : '—'}
                       </td>
                     )}
                     {showDuration && (
@@ -328,7 +328,7 @@ export const PrintableView: React.FC<PrintableViewProps> = ({
               承辦人簽章：____________________ &nbsp;&nbsp;&nbsp;&nbsp; 人事單位覆核：____________________ &nbsp;&nbsp;&nbsp;&nbsp; 單位主管核閱：____________________
             </div>
             <div>
-              列印時間：{new Date().toLocaleString('zh-TW', { hour12: false })}
+              列印時間：{new Date().toLocaleString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' })}
             </div>
           </div>
         </div>

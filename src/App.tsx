@@ -4,52 +4,91 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { EventInfo, RegisteredParticipant, CheckInRecord } from './types';
+import { onSnapshot, type SnapshotMetadata } from 'firebase/firestore';
+import { EventInfo, RegisteredParticipant, CheckInRecord, SyncStatus, SubmitWindow } from './types';
+import { syncServerClock } from './utils/submitWindow';
+import { importRosterWithSerials, addParticipantWithSerial, walkInSerials, rosterSerialsComplete } from './utils/serial';
 import {
-  DEFAULT_EVENT_INFO,
-  DEFAULT_ROSTER,
-  DEFAULT_CHECKINS,
   loadEventInfo,
   saveEventInfo,
   loadRoster,
   saveRoster,
   loadCheckIns,
-  saveCheckIns,
   buildCombinedAttendeeList,
   calculateParticipationDuration,
   calculateCompTime,
   formatMinutesDisplay
 } from './utils/storage';
+import { getDeviceId, fetchLegacyCloudData } from './utils/cloudSync';
 import {
-  getDeviceId,
-  getCloudRoomId,
-  fetchFromCloudRelay,
-  pushToCloudRelay,
-  SyncPayload
-} from './utils/cloudSync';
+  eventDocRef,
+  checkInsColRef,
+  ensureEventSeeded,
+  mutateEvent,
+  assignWalkInSerial,
+  normalizeRosterSerials,
+  writeCheckIn,
+  updateCheckIn,
+  deleteCheckIns,
+  deleteAllCheckIns,
+  type EventDocData
+} from './utils/firebase';
 import { EventHeader } from './components/EventHeader';
 import { CheckInForm } from './components/CheckInForm';
 import { CheckOutForm } from './components/CheckOutForm';
 import { Dashboard } from './components/Dashboard';
 import { OrganizerAuthModal } from './components/OrganizerAuthModal';
+import { VipStatusBoard } from './components/VipStatusBoard';
+import { setRosterVip } from './utils/vip';
+
+/** 新的在最上面 (與原本 unshift 的順序一致) */
+function sortCheckIns(list: CheckInRecord[]): CheckInRecord[] {
+  return [...list].sort((a, b) => (b.checkInTime || '').localeCompare(a.checkInTime || ''));
+}
+
+function statusFromMetadata(m: SnapshotMetadata): SyncStatus {
+  if (m.hasPendingWrites) return 'pending';
+  if (m.fromCache) return 'offline';
+  return 'synced';
+}
+
+type SubmitContext = 'checkin' | 'checkout';
+
+function describeSyncError(err: unknown, submit?: SubmitContext): string {
+  const code = (err as { code?: string })?.code || '';
+  if (code === 'permission-denied' && submit) {
+    return `送出失敗：目前不在${submit === 'checkin' ? '簽到' : '簽退'}開放時段內（以伺服器時間為準），如需補登請洽承辦人員`;
+  }
+  if (code === 'permission-denied') return '雲端拒絕這次修改：該紀錄可能已被其他裝置取消或刪除，請重新整理畫面後再試';
+  if (code === 'unavailable') return '目前無法連上雲端，請檢查網路後再試一次';
+  if (code === 'not-found') return '找不到這筆紀錄，可能已被其他裝置刪除';
+  return `同步發生錯誤${code ? ` (${code})` : ''}，請稍後再試`;
+}
 
 export default function App() {
   const [eventInfo, setEventInfo] = useState<EventInfo>(() => loadEventInfo());
   const [roster, setRoster] = useState<RegisteredParticipant[]>(() => loadRoster());
   const [checkIns, setCheckIns] = useState<CheckInRecord[]>(() => loadCheckIns());
-  const [activeMode, setActiveMode] = useState<'checkin' | 'checkout' | 'dashboard'>('checkin');
+  const [activeMode, setActiveMode] = useState<'checkin' | 'checkout' | 'vip' | 'dashboard'>('checkin');
 
   const myDeviceIdRef = useRef<string>(getDeviceId());
-  const lastSyncedUpdatedAtRef = useRef<number>(0);
-  const isBroadcastingRef = useRef<boolean>(false);
 
   const [lastSyncInfo, setLastSyncInfo] = useState<{
     time: string;
     device: string;
     action: string;
   } | null>(null);
+  const lastSyncInfoAtRef = useRef<number>(0);
 
-  // Organizer Authentication state (Required password: nick620504)
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('connecting');
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  // 最後一次從雲端收到的活動資料，交易失敗時用來還原畫面
+  const lastEventSnapshotRef = useRef<EventDocData | null>(null);
+  // 雲端序號計數器 (目前已發出的最大序號)
+  const [lastSerialNo, setLastSerialNo] = useState<number | undefined>(undefined);
+
+  // Organizer Authentication state
   const [isOrganizerAuthenticated, setIsOrganizerAuthenticated] = useState<boolean>(() => {
     try {
       return sessionStorage.getItem('organizer_auth_verified') === 'true';
@@ -59,159 +98,173 @@ export default function App() {
   });
   const [showAuthModal, setShowAuthModal] = useState(false);
 
-  // Core Sync Engine: Apply mutation on local state immediately, then sync with cloud
-  const executeMutationAndBroadcast = async (
-    actionDesc: string,
-    mutation: (base: {
-      eventInfo: EventInfo;
-      roster: RegisteredParticipant[];
-      checkIns: CheckInRecord[];
-    }) => {
-      eventInfo: EventInfo;
-      roster: RegisteredParticipant[];
-      checkIns: CheckInRecord[];
-    }
-  ) => {
-    isBroadcastingRef.current = true;
-    try {
-      // 0. Immediate optimistic update: instant UI response with 0ms delay
-      const optimisticBase = { eventInfo, roster, checkIns };
-      const optimisticNext = mutation(optimisticBase);
-      setEventInfo(optimisticNext.eventInfo);
-      setRoster(optimisticNext.roster);
-      setCheckIns(optimisticNext.checkIns);
-      saveEventInfo(optimisticNext.eventInfo);
-      saveRoster(optimisticNext.roster);
-      saveCheckIns(optimisticNext.checkIns);
-
-      const roomId = getCloudRoomId();
-
-      // 1. Fetch freshest cloud state first so changes from the other device are never lost
-      const freshCloud = await fetchFromCloudRelay(roomId);
-      const baseRoster = freshCloud && Array.isArray(freshCloud.roster) && freshCloud.roster.length > 0 ? freshCloud.roster : optimisticNext.roster;
-      const baseCheckIns = freshCloud && Array.isArray(freshCloud.checkIns) ? freshCloud.checkIns : optimisticNext.checkIns;
-      const baseEvent = freshCloud && freshCloud.eventInfo ? freshCloud.eventInfo : optimisticNext.eventInfo;
-
-      const base = {
-        eventInfo: baseEvent,
-        roster: baseRoster,
-        checkIns: baseCheckIns
-      };
-
-      // 2. Apply addition, deletion, or modification
-      const next = mutation(base);
-
-      // 3. Stamp with strictly increasing millisecond timestamp
-      const now = Math.max(Date.now(), (freshCloud?.updatedAt || 0) + 1, lastSyncedUpdatedAtRef.current + 1);
-      lastSyncedUpdatedAtRef.current = now;
-
-      // 4. Update local React state & LocalStorage immediately
-      setEventInfo(next.eventInfo);
-      setRoster(next.roster);
-      setCheckIns(next.checkIns);
-      saveEventInfo(next.eventInfo);
-      saveRoster(next.roster);
-      saveCheckIns(next.checkIns);
-
-      setLastSyncInfo({
-        time: new Date(now).toLocaleTimeString('zh-TW', { hour12: false }),
-        device: myDeviceIdRef.current,
-        action: actionDesc
-      });
-
-      // 5. Broadcast newest state to Cloud Relay (instantly picked up by phone or computer)
-      const payload: SyncPayload = {
-        eventInfo: next.eventInfo,
-        roster: next.roster,
-        checkIns: next.checkIns,
-        updatedAt: now,
-        lastModifiedBy: myDeviceIdRef.current,
-        actionDescription: actionDesc
-      };
-
-      await pushToCloudRelay(roomId, payload);
-    } catch (err) {
-      console.error('[Sync] Error during mutation broadcast:', err);
-    } finally {
-      setTimeout(() => {
-        isBroadcastingRef.current = false;
-      }, 300);
-    }
+  const noteSyncInfo = (updatedAt: number | undefined, device: string | undefined, action: string | undefined) => {
+    if (!updatedAt || updatedAt <= lastSyncInfoAtRef.current) return;
+    lastSyncInfoAtRef.current = updatedAt;
+    setLastSyncInfo({
+      time: new Date(updatedAt).toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' }),
+      device: device || '遠端裝置',
+      action: action || '更新資料'
+    });
   };
 
-  // High-frequency Real-time Auto-Sync Loop (Self-scheduling timeout loop, ensures both phone and computer stay in sync)
+  // 即時同步：Firestore 有任何變動會主動推送到所有裝置，不需要輪詢
   useEffect(() => {
-    let isMounted = true;
-    let timerId: any = null;
-    const roomId = getCloudRoomId();
+    // 校正本機時鐘，開放時段以伺服器時間為準
+    syncServerClock();
 
-    const checkCloudUpdates = async () => {
-      if (isBroadcastingRef.current) return;
-      try {
-        const remote = await fetchFromCloudRelay(roomId);
-        if (!remote || typeof remote.updatedAt !== 'number' || !isMounted) return;
+    const parts: Record<'event' | 'checkIns', SyncStatus> = { event: 'connecting', checkIns: 'connecting' };
+    const refreshStatus = () => {
+      const all = Object.values(parts);
+      const order: SyncStatus[] = ['error', 'offline', 'connecting', 'pending', 'synced'];
+      setSyncStatus(order.find(s => all.includes(s)) || 'synced');
+    };
 
-        // If cloud data is newer or from another device with different timestamp, accept immediately (fixes clock skew)
-        const isFromOtherDevice = Boolean(remote.lastModifiedBy && remote.lastModifiedBy !== myDeviceIdRef.current);
-        const isNewer = remote.updatedAt > lastSyncedUpdatedAtRef.current;
-        const isDifferentTimestampFromOther = isFromOtherDevice && remote.updatedAt !== lastSyncedUpdatedAtRef.current;
+    // 第一次使用：雲端沒有資料時，搬移舊系統 (kvdb) 或本機的資料
+    ensureEventSeeded(async () => {
+      const legacy = await fetchLegacyCloudData();
+      return legacy || { eventInfo: loadEventInfo(), roster: loadRoster(), checkIns: loadCheckIns() };
+    }).catch(err => {
+      console.error('[Firebase] Seeding failed:', err);
+      setSyncError(describeSyncError(err));
+    });
 
-        if (isNewer || isDifferentTimestampFromOther) {
-          lastSyncedUpdatedAtRef.current = Math.max(remote.updatedAt, lastSyncedUpdatedAtRef.current);
-          setEventInfo(remote.eventInfo);
-          setRoster(remote.roster);
-          setCheckIns(remote.checkIns);
-          saveEventInfo(remote.eventInfo);
-          saveRoster(remote.roster);
-          saveCheckIns(remote.checkIns);
+    const unsubEvent = onSnapshot(
+      eventDocRef,
+      { includeMetadataChanges: true },
+      snap => {
+        parts.event = statusFromMetadata(snap.metadata);
+        refreshStatus();
+        if (!snap.exists()) return;
 
-          setLastSyncInfo({
-            time: new Date(remote.updatedAt).toLocaleTimeString('zh-TW', { hour12: false }),
-            device: remote.lastModifiedBy || '遠端裝置',
-            action: remote.actionDescription || '同步最新資料'
-          });
+        const data = snap.data() as EventDocData;
+        if (data.eventInfo) {
+          setEventInfo(data.eventInfo);
+          saveEventInfo(data.eventInfo);
         }
-      } catch (err) {
-        // network hiccup
+        if (Array.isArray(data.roster)) {
+          setRoster(data.roster);
+          setLastSerialNo(typeof data.lastSerialNo === 'number' ? data.lastSerialNo : undefined);
+          saveRoster(data.roster);
+        }
+        if (!snap.metadata.hasPendingWrites) {
+          if (data.eventInfo && Array.isArray(data.roster)) {
+            lastEventSnapshotRef.current = { eventInfo: data.eventInfo, roster: data.roster };
+          }
+          noteSyncInfo(data.updatedAt, data.lastModifiedBy, data.actionDescription);
+        }
+      },
+      err => {
+        console.error('[Firebase] Event listener error:', err);
+        parts.event = 'error';
+        refreshStatus();
+        setSyncError(describeSyncError(err));
       }
-    };
+    );
 
-    // Sequential self-scheduling poll loop: prevents request pile-up on slower mobile networks
-    const pollLoop = async () => {
-      if (!isMounted) return;
-      await checkCloudUpdates();
-      if (isMounted) {
-        timerId = setTimeout(pollLoop, 1200);
+    const unsubCheckIns = onSnapshot(
+      checkInsColRef,
+      { includeMetadataChanges: true },
+      snap => {
+        parts.checkIns = statusFromMetadata(snap.metadata);
+        refreshStatus();
+        // 剛開啟且本機快取還是空的：先保留畫面上的資料，等雲端回應
+        if (snap.metadata.fromCache && snap.empty) return;
+
+        const list = snap.docs.map(d => ({ ...(d.data() as CheckInRecord), id: d.id }));
+        setCheckIns(sortCheckIns(list));
+
+        snap.docChanges().forEach(change => {
+          if (change.type === 'removed' || change.doc.metadata.hasPendingWrites) return;
+          const c = change.doc.data() as CheckInRecord;
+          noteSyncInfo(c.syncUpdatedAt, c.syncModifiedBy, c.syncAction);
+        });
+      },
+      err => {
+        console.error('[Firebase] Check-ins listener error:', err);
+        parts.checkIns = 'error';
+        refreshStatus();
+        setSyncError(describeSyncError(err));
       }
-    };
-
-    // Immediate initial load on mount
-    pollLoop();
-
-    // Instant re-check when phone screen wakes up, browser tab becomes visible, or comes online
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        checkCloudUpdates();
-      }
-    };
-    const handleOnline = () => {
-      checkCloudUpdates();
-    };
-
-    document.addEventListener('visibilitychange', handleVisibility);
-    window.addEventListener('online', handleOnline);
+    );
 
     return () => {
-      isMounted = false;
-      if (timerId) clearTimeout(timerId);
-      document.removeEventListener('visibilitychange', handleVisibility);
-      window.removeEventListener('online', handleOnline);
+      unsubEvent();
+      unsubCheckIns();
     };
   }, []);
 
+  // 執行雲端寫入；失敗時顯示錯誤並 (必要時) 還原畫面
+  // 回傳 null = 成功；字串 = 失敗原因 (給簽到/簽退頁顯示)
+  const runSync = (promise: Promise<unknown>, onFail?: () => void, submit?: SubmitContext): Promise<string | null> => {
+    setSyncError(null);
+    return promise.then(
+      () => null,
+      err => {
+        console.error('[Firebase] Write failed:', err);
+        const message = describeSyncError(err, submit);
+        setSyncError(message);
+        setSyncStatus('error');
+        onFail?.();
+        return message;
+      }
+    );
+  };
+
+  // 活動資訊與名冊：先更新畫面，再以交易寫入雲端 (以雲端最新名冊為基礎套用修改)
+  const runEventMutation = (action: string, mutation: (current: EventDocData) => EventDocData) => {
+    const current = { eventInfo, roster, lastSerialNo };
+    const optimistic = mutation(current);
+    setEventInfo(optimistic.eventInfo);
+    setRoster(optimistic.roster);
+
+    runSync(mutateEvent(action, current, mutation), () => {
+      const last = lastEventSnapshotRef.current;
+      if (last) {
+        setEventInfo(last.eventInfo);
+        setRoster(last.roster);
+      }
+    });
+  };
+
+  /* ---------------- 現場追加序號配發 ---------------- */
+  // 待配發序號的簽到紀錄 ID (本機送出的現場追加；承辦人後台另會補發所有缺號者)
+  const pendingSerialIdsRef = useRef<Set<string>>(new Set());
+  const serialWorkerBusyRef = useRef(false);
+
+  const runSerialWorker = async () => {
+    if (serialWorkerBusyRef.current) return;
+    serialWorkerBusyRef.current = true;
+    try {
+      // 一次處理一筆，依加入順序取號
+      for (const id of Array.from(pendingSerialIdsRef.current)) {
+        try {
+          await assignWalkInSerial(id);
+          pendingSerialIdsRef.current.delete(id);
+        } catch (err) {
+          // 離線或衝突：保留在待辦清單，連線恢復後再試
+          console.warn('[Serial] assign failed, will retry:', (err as { code?: string })?.code || err);
+          break;
+        }
+      }
+    } finally {
+      serialWorkerBusyRef.current = false;
+    }
+  };
+
+  const requestWalkInSerial = (checkInId: string) => {
+    pendingSerialIdsRef.current.add(checkInId);
+    runSerialWorker();
+  };
+
+  const isSamePerson = (c: CheckInRecord, attendeeId: string, name?: string) =>
+    c.id === attendeeId ||
+    c.participantId === attendeeId ||
+    Boolean(name && c.name.trim().toLowerCase() === name.trim().toLowerCase());
+
   // Request mode switcher with password gate
-  const handleRequestSwitchMode = (targetMode: 'checkin' | 'checkout' | 'dashboard') => {
-    if (targetMode === 'checkin' || targetMode === 'checkout') {
+  const handleRequestSwitchMode = (targetMode: 'checkin' | 'checkout' | 'vip' | 'dashboard') => {
+    if (targetMode === 'checkin' || targetMode === 'checkout' || targetMode === 'vip') {
       setActiveMode(targetMode);
     } else {
       if (isOrganizerAuthenticated) {
@@ -243,91 +296,90 @@ export default function App() {
     setActiveMode('checkin');
   };
 
-  // 1. Handle event info updates (synced based on latest write)
+  // 1. 修改活動資訊
+  // 開放時段只由 handleUpdateSubmitWindow 修改，這裡保留雲端上的設定，
+  // 避免編輯活動資訊時用畫面上的舊資料蓋掉另一台裝置剛改的時段
   const handleUpdateEventInfo = (updated: EventInfo) => {
-    executeMutationAndBroadcast('修改活動資訊', base => ({
-      ...base,
-      eventInfo: updated
+    runEventMutation('修改活動資訊', cur => ({
+      ...cur,
+      eventInfo: {
+        ...updated,
+        checkInWindow: cur.eventInfo.checkInWindow,
+        checkOutWindow: cur.eventInfo.checkOutWindow
+      }
     }));
   };
 
-  // 2. Handle participant check-in submission (synced based on latest write)
-  const handleCheckInSuccess = (record: CheckInRecord) => {
-    executeMutationAndBroadcast(`學員報到: ${record.name}`, base => {
-      const cleanName = record.name.trim().toLowerCase();
-      const existingIdx = base.checkIns.findIndex(
-        c => (record.participantId && c.participantId === record.participantId) ||
-             c.name.trim().toLowerCase() === cleanName
-      );
-
-      let nextCheckIns: CheckInRecord[];
-      if (existingIdx >= 0) {
-        nextCheckIns = [...base.checkIns];
-        nextCheckIns[existingIdx] = record;
-      } else {
-        nextCheckIns = [record, ...base.checkIns];
-      }
-
-      return {
-        ...base,
-        checkIns: nextCheckIns
-      };
-    });
+  // 1b. 設定簽到 / 簽退開放時段 (只改這一個欄位)
+  const handleUpdateSubmitWindow = (kind: 'checkin' | 'checkout', window: SubmitWindow) => {
+    const key = kind === 'checkin' ? 'checkInWindow' : 'checkOutWindow';
+    const label = kind === 'checkin' ? '簽到' : '簽退';
+    const desc = !window.enabled ? `取消${label}時段限制` : `設定${label}開放時段`;
+    runEventMutation(desc, cur => ({ ...cur, eventInfo: { ...cur.eventInfo, [key]: window } }));
   };
 
-  // 3. Handle roster Excel/CSV import (synced based on latest write)
+  // 2. 學員簽到 (同一人已有紀錄時，覆蓋原本那筆)
+  const handleCheckInSuccess = (record: CheckInRecord, source: 'student' | 'organizer' = 'student') => {
+    const cleanName = record.name.trim().toLowerCase();
+    const existing = checkIns.find(
+      c => (record.participantId && c.participantId === record.participantId) ||
+           c.name.trim().toLowerCase() === cleanName
+    );
+    const id = existing ? existing.id : record.id;
+    const result = runSync(
+      writeCheckIn({ ...record, id }, `學員報到: ${record.name}`, source),
+      undefined,
+      source === 'student' ? 'checkin' : undefined
+    );
+    // 名冊上沒有的人 → 現場追加：等雲端確認收到簽到後，配發序號 (目前最大號 + 1)
+    const inRoster = roster.some(p => (record.participantId && p.id === record.participantId) || p.name.trim().toLowerCase() === cleanName);
+    if (!inRoster) {
+      result.then(rejectReason => {
+        if (!rejectReason) requestWalkInSerial(id);
+      });
+    }
+    return result;
+  };
+
+  // 3. 匯入名冊 (Excel/CSV)
   const handleImportRoster = (
     newParticipants: RegisteredParticipant[],
     mode: 'replace' | 'append',
     selectedColumns?: string[],
     allColumns?: string[]
   ) => {
-    executeMutationAndBroadcast(`匯入名冊 (${newParticipants.length}人)`, base => {
-      let nextRoster: RegisteredParticipant[];
-      if (mode === 'replace') {
-        nextRoster = newParticipants;
-      } else {
-        const existingNames = new Set(base.roster.map(p => p.name.trim().toLowerCase()));
-        const filteredNew = newParticipants.filter(p => !existingNames.has(p.name.trim().toLowerCase()));
-        nextRoster = [...base.roster, ...filteredNew];
-      }
+    const usedByWalkIns = walkInSerials(checkIns);
+    runEventMutation(`匯入名冊 (${newParticipants.length}人)`, base => {
+      // 序號取自 Excel「編號」欄位，缺漏或重複者從最大號往後補發
+      const numbered = importRosterWithSerials(base.roster, base.lastSerialNo, newParticipants, mode, usedByWalkIns);
       const nextEventInfo: EventInfo = {
         ...base.eventInfo,
         ...(selectedColumns && selectedColumns.length > 0 ? { completionDisplayFields: selectedColumns } : {}),
         ...(allColumns && allColumns.length > 0 ? { availableRosterColumns: allColumns } : {})
       };
-      return {
-        ...base,
-        eventInfo: nextEventInfo,
-        roster: nextRoster
-      };
+      return { eventInfo: nextEventInfo, roster: numbered.roster, lastSerialNo: numbered.lastSerialNo };
     });
   };
 
-  // 4. Handle adding attendee manually (synced based on latest write)
+  // 4. 手動新增學員
   const handleAddRosterParticipant = (p: RegisteredParticipant) => {
-    executeMutationAndBroadcast(`新增學員: ${p.name}`, base => {
-      // Avoid duplicate by id or name
-      const exists = base.roster.some(x => x.id === p.id || (x.name.trim() === p.name.trim() && x.title === p.title));
-      const nextRoster = exists ? base.roster : [...base.roster, p];
-      return {
-        ...base,
-        roster: nextRoster
-      };
+    runEventMutation(`新增學員: ${p.name}`, base => {
+      const numbered = addParticipantWithSerial(base.roster, base.lastSerialNo, p);
+      return { ...base, roster: numbered.roster, lastSerialNo: numbered.lastSerialNo };
     });
   };
 
-  // 5. Handle deleting attendee from roster (synced based on latest write)
+  // 5. 從名冊刪除學員
   const handleDeleteRosterParticipant = (id: string) => {
     const target = roster.find(p => p.id === id);
     const targetName = target ? target.name : '學員';
-    executeMutationAndBroadcast(`刪除學員: ${targetName}`, base => ({
+    runEventMutation(`刪除學員: ${targetName}`, base => ({
       ...base,
       roster: base.roster.filter(p => p.id !== id && (target ? p.name !== target.name : true))
     }));
   };
 
-  // 6. Manual check-in performed by organizer (synced based on latest write)
+  // 6. 承辦人手動協助報到
   const handleManualCheckIn = (attendee: { id: string; name: string; title: string; department?: string; phone?: string; email?: string; customFields?: Record<string, string> }) => {
     const canvas = document.createElement('canvas');
     canvas.width = 240;
@@ -344,7 +396,7 @@ export default function App() {
       ctx.textAlign = 'center';
       ctx.fillText('承辦人員現場核驗報到', 120, 36);
       ctx.font = '11px sans-serif';
-      ctx.fillText(new Date().toLocaleTimeString('zh-TW', { hour12: false }), 120, 56);
+      ctx.fillText(new Date().toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' }), 120, 56);
     }
 
     const stampDataUrl = canvas.toDataURL('image/jpeg', 0.8);
@@ -363,10 +415,10 @@ export default function App() {
       notes: '活動承辦人手動協助報到'
     };
 
-    handleCheckInSuccess(newRecord);
+    handleCheckInSuccess(newRecord, 'organizer');
   };
 
-  // 6b. Check-out success submission from CheckOutForm (支援參加時間 + 路途時間 - 扣除時間)
+  // 6b. 學員簽退 (參加時間 + 路途時間 - 扣除時間)
   const handleCheckOutSuccess = (
     checkInId: string,
     checkOutTime: string,
@@ -397,45 +449,28 @@ export default function App() {
     const actualCompTime = typeof compTimeMinutes === 'number' ? compTimeMinutes : compResult.compMinutes;
     const actualCompDisplay = compTimeDisplay || compResult.compDisplay;
 
-    executeMutationAndBroadcast(`學員簽退: ${participantName} (${durationDisplay})`, base => {
-      const nextCheckIns = base.checkIns.map(c => {
-        if (c.id === checkInId) {
-          return {
-            ...c,
-            checkOutTime,
-            checkOutSignatureDataUrl: signatureDataUrl,
-            durationMinutes,
-            durationDisplay,
-            travelMinutes: actualTravelMinutes,
-            travelDisplay: actualTravelDisplay,
-            deductionMinutes: actualDeductionMinutes,
-            deductionDisplay: actualDeductionDisplay,
-            deductionReason: actualDeductionReason,
-            compTimeMinutes: actualCompTime,
-            compTimeDisplay: actualCompDisplay
-          };
-        }
-        return c;
-      });
-
-      return {
-        ...base,
-        checkIns: nextCheckIns
-      };
-    });
+    return runSync(updateCheckIn(checkInId, {
+      checkOutTime,
+      checkOutSignatureDataUrl: signatureDataUrl,
+      durationMinutes,
+      durationDisplay,
+      travelMinutes: actualTravelMinutes,
+      travelDisplay: actualTravelDisplay,
+      deductionMinutes: actualDeductionMinutes,
+      deductionDisplay: actualDeductionDisplay,
+      deductionReason: actualDeductionReason,
+      compTimeMinutes: actualCompTime,
+      compTimeDisplay: actualCompDisplay
+    }, `學員簽退: ${participantName} (${durationDisplay})`, 'student'), undefined, 'checkout');
   };
 
-  // 6c. Manual check-out performed by organizer from Dashboard (參加時間 + 路途時間 - 扣除時間)
+  // 6c. 承辦人從後台協助簽退
   const handleManualCheckOut = (attendeeId: string) => {
     const target = combinedAttendees.find(a => a.id === attendeeId);
     if (!target) return;
 
-    const checkInRecord = checkIns.find(
-      c => c.id === attendeeId || c.participantId === attendeeId || c.name.trim().toLowerCase() === target.name.trim().toLowerCase()
-    );
-    if (!checkInRecord) {
-      return;
-    }
+    const checkInRecord = checkIns.find(c => isSamePerson(c, attendeeId, target.name));
+    if (!checkInRecord) return;
 
     const checkOutTime = new Date().toISOString();
     const duration = calculateParticipationDuration(checkInRecord.checkInTime, checkOutTime);
@@ -452,10 +487,7 @@ export default function App() {
     const deductionReason = useDeduction ? (checkInRecord.deductionReason ?? eventInfo.deductionReason ?? '午休用餐休息時間不計入補休') : undefined;
 
     const compResult = calculateCompTime(durationMinutes, travelMins, deductionMins);
-    const compMins = compResult.compMinutes;
-    const compDisp = compResult.compDisplay;
 
-    // Create a virtual stamp for manual sign-out
     const canvas = document.createElement('canvas');
     canvas.width = 240;
     canvas.height = 80;
@@ -471,196 +503,176 @@ export default function App() {
       ctx.textAlign = 'center';
       ctx.fillText('承辦人員現場協助簽退', 120, 36);
       ctx.font = '11px sans-serif';
-      ctx.fillText(new Date().toLocaleTimeString('zh-TW', { hour12: false }), 120, 56);
+      ctx.fillText(new Date().toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' }), 120, 56);
     }
     const stampDataUrl = canvas.toDataURL('image/jpeg', 0.8);
 
-    executeMutationAndBroadcast(`承辦人協助簽退: ${target.name}`, base => {
-      const nextCheckIns = base.checkIns.map(c => {
-        if (c.id === checkInRecord.id) {
-          return {
-            ...c,
-            checkOutTime,
-            checkOutSignatureDataUrl: stampDataUrl,
-            durationMinutes,
-            durationDisplay,
-            travelMinutes: travelMins,
-            travelDisplay: travelDisp,
-            deductionMinutes: deductionMins,
-            deductionDisplay: deductionDisp,
-            deductionReason: deductionReason,
-            compTimeMinutes: compMins,
-            compTimeDisplay: compDisp,
-            notes: c.notes ? `${c.notes} / 承辦人協助簽退` : '承辦人協助簽退'
-          };
-        }
-        return c;
-      });
-
-      return {
-        ...base,
-        checkIns: nextCheckIns
-      };
-    });
+    runSync(updateCheckIn(checkInRecord.id, {
+      checkOutTime,
+      checkOutSignatureDataUrl: stampDataUrl,
+      durationMinutes,
+      durationDisplay,
+      travelMinutes: travelMins,
+      travelDisplay: travelDisp,
+      deductionMinutes: deductionMins,
+      deductionDisplay: deductionDisp,
+      deductionReason,
+      compTimeMinutes: compResult.compMinutes,
+      compTimeDisplay: compResult.compDisplay,
+      notes: checkInRecord.notes ? `${checkInRecord.notes} / 承辦人協助簽退` : '承辦人協助簽退'
+    }, `承辦人協助簽退: ${target.name}`, 'organizer'));
   };
 
-  // 6d. Update travel time for attendee directly
+  // 6d. 更新個別學員的路途時間
   const handleUpdateTravelTime = (attendeeId: string, minutes: number) => {
     const targetAttendee = combinedAttendees.find(a => a.id === attendeeId);
     const targetName = targetAttendee ? targetAttendee.name : '學員';
+    const action = `更新路途時間: ${targetName} (${minutes}分鐘)`;
 
-    executeMutationAndBroadcast(`更新路途時間: ${targetName} (${minutes}分鐘)`, base => {
-      const nextCheckIns = base.checkIns.map(c => {
-        const isMatch =
-          c.id === attendeeId ||
-          c.participantId === attendeeId ||
-          (targetAttendee && c.name.trim().toLowerCase() === targetAttendee.name.trim().toLowerCase());
-
-        if (isMatch) {
-          const compResult = calculateCompTime(c.durationMinutes ?? 0, minutes);
-          return {
-            ...c,
-            travelMinutes: minutes,
-            travelDisplay: formatMinutesDisplay(minutes),
-            compTimeMinutes: compResult.compMinutes,
-            compTimeDisplay: compResult.compDisplay
-          };
-        }
-        return c;
+    checkIns
+      .filter(c => isSamePerson(c, attendeeId, targetAttendee?.name))
+      .forEach(c => {
+        const compResult = calculateCompTime(c.durationMinutes ?? 0, minutes, c.deductionMinutes ?? 0);
+        runSync(updateCheckIn(c.id, {
+          travelMinutes: minutes,
+          travelDisplay: formatMinutesDisplay(minutes),
+          compTimeMinutes: compResult.compMinutes,
+          compTimeDisplay: compResult.compDisplay
+        }, action, 'organizer'));
       });
 
-      const nextRoster = base.roster.map(r => {
-        if (r.id === attendeeId || (targetAttendee && r.name.trim().toLowerCase() === targetAttendee.name.trim().toLowerCase())) {
-          return {
-            ...r,
-            travelMinutes: minutes
-          };
-        }
-        return r;
-      });
-
-      return {
-        ...base,
-        checkIns: nextCheckIns,
-        roster: nextRoster
-      };
-    });
-  };
-
-  // 7. Remove single check-in (synced based on latest write, matches checkInId, attendeeId, and name)
-  const handleRemoveCheckIn = (attendeeId: string, checkInId?: string, attendeeName?: string) => {
-    executeMutationAndBroadcast(`取消報到: ${attendeeName || attendeeId}`, base => {
-      const cleanName = attendeeName ? attendeeName.trim().toLowerCase() : '';
-      return {
-        ...base,
-        checkIns: base.checkIns.filter(c => {
-          if (checkInId && c.id === checkInId) return false;
-          if (c.id === attendeeId) return false;
-          if (c.participantId === attendeeId) return false;
-          if (cleanName && c.name.trim().toLowerCase() === cleanName) return false;
-          return true;
-        })
-      };
-    });
-  };
-
-  // 8. Reset all check-in records (synced based on latest write)
-  const handleResetAllCheckIns = () => {
-    executeMutationAndBroadcast('重設所有簽到紀錄', base => ({
+    runEventMutation(action, base => ({
       ...base,
-      checkIns: []
+      roster: base.roster.map(r =>
+        r.id === attendeeId || (targetAttendee && r.name.trim().toLowerCase() === targetAttendee.name.trim().toLowerCase())
+          ? { ...r, travelMinutes: minutes }
+          : r
+      )
     }));
   };
 
-  // 9. Handle toggling verification state (獨立拆分為簽到覆核與簽退覆核，即時雙向同步)
+  // 7. 取消單一學員的報到 (比對紀錄 ID、名冊 ID 與姓名)
+  const handleRemoveCheckIn = (attendeeId: string, checkInId?: string, attendeeName?: string) => {
+    const ids = checkIns
+      .filter(c => (checkInId && c.id === checkInId) || isSamePerson(c, attendeeId, attendeeName))
+      .map(c => c.id);
+    runSync(deleteCheckIns(ids, `取消報到: ${attendeeName || attendeeId}`));
+  };
+
+  // 7b. 貴賓標記 (名冊人員存在名冊上；現場追加存在簽到紀錄上)
+  const handleToggleVip = (attendeeId: string) => {
+    const target = combinedAttendees.find(a => a.id === attendeeId);
+    if (!target) return;
+    const next = !target.isVip;
+    const action = `${next ? '標記' : '取消'}貴賓: ${target.name}`;
+    if (target.status === 'WALK_IN' && target.checkInId) {
+      runSync(updateCheckIn(target.checkInId, { isVip: next }, action, 'organizer'));
+    } else {
+      runEventMutation(action, base => ({ ...base, roster: setRosterVip(base.roster, attendeeId, next) }));
+    }
+  };
+
+  // 8. 清空所有簽到紀錄
+  const handleResetAllCheckIns = () => {
+    runSync(deleteAllCheckIns('重設所有簽到紀錄'));
+  };
+
+  // 9. 簽到覆核 / 簽退覆核 (寫入明確的新狀態，不受其他裝置操作順序影響)
   const handleToggleHrVerify = (attendeeId: string, type: 'checkin' | 'checkout' = 'checkin') => {
     const targetAttendee = combinedAttendees.find(a => a.id === attendeeId);
-    const targetName = targetAttendee ? targetAttendee.name : '學員';
+    if (!targetAttendee) return;
+    const action = `${type === 'checkin' ? '簽到' : '簽退'}覆核變更: ${targetAttendee.name}`;
+    const isAlreadyCheckedIn = targetAttendee.status === 'CHECKED_IN' || targetAttendee.status === 'WALK_IN';
 
-    executeMutationAndBroadcast(`${type === 'checkin' ? '簽到' : '簽退'}覆核變更: ${targetName}`, base => {
-      const isAlreadyCheckedIn = targetAttendee && (targetAttendee.status === 'CHECKED_IN' || targetAttendee.status === 'WALK_IN');
-
-      let nextCheckIns: CheckInRecord[];
-
-      if (isAlreadyCheckedIn) {
-        nextCheckIns = base.checkIns.map(c => {
-          const isMatch =
-            c.id === attendeeId ||
-            c.participantId === attendeeId ||
-            (targetAttendee && c.name.trim().toLowerCase() === targetAttendee.name.trim().toLowerCase());
-
-          if (isMatch) {
-            const nowIso = new Date().toISOString();
-            if (type === 'checkout') {
-              const nextVerified = !c.checkOutHrVerified;
-              return {
-                ...c,
-                checkOutHrVerified: nextVerified,
-                checkOutHrVerifiedAt: nextVerified ? nowIso : undefined
-              };
-            } else {
-              const nextVerified = !(c.checkInHrVerified ?? c.hrVerified);
-              return {
-                ...c,
-                checkInHrVerified: nextVerified,
-                hrVerified: nextVerified,
-                checkInHrVerifiedAt: nextVerified ? nowIso : undefined
-              };
-            }
+    if (isAlreadyCheckedIn) {
+      const nowIso = new Date().toISOString();
+      checkIns
+        .filter(c => isSamePerson(c, attendeeId, targetAttendee.name))
+        .forEach(c => {
+          if (type === 'checkout') {
+            const nextVerified = !c.checkOutHrVerified;
+            runSync(updateCheckIn(c.id, {
+              checkOutHrVerified: nextVerified,
+              checkOutHrVerifiedAt: nextVerified ? nowIso : undefined
+            }, action, 'organizer'));
+          } else {
+            const nextVerified = !(c.checkInHrVerified ?? c.hrVerified);
+            runSync(updateCheckIn(c.id, {
+              checkInHrVerified: nextVerified,
+              hrVerified: nextVerified,
+              checkInHrVerifiedAt: nextVerified ? nowIso : undefined
+            }, action, 'organizer'));
           }
-          return c;
         });
-      } else if (targetAttendee && type === 'checkin') {
-        // Attendee has not checked in yet, but HR clicks verify -> direct check-in with verification stamp
-        const now = new Date();
-        const canvas = document.createElement('canvas');
-        canvas.width = 240;
-        canvas.height = 80;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, 0, 240, 80);
-          ctx.strokeStyle = '#4f46e5';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(10, 10, 220, 60);
-          ctx.fillStyle = '#4f46e5';
-          ctx.font = 'bold 15px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText('人事單位現場簽到覆核', 120, 36);
-          ctx.font = '11px sans-serif';
-          ctx.fillText(now.toLocaleTimeString('zh-TW', { hour12: false }), 120, 56);
-        }
-        const stampDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+      return;
+    }
 
-        const newRecord: CheckInRecord = {
-          id: `hr-checkin-${now.getTime()}`,
-          participantId: targetAttendee.id,
-          name: targetAttendee.name,
-          title: targetAttendee.title,
-          department: targetAttendee.department,
-          checkInTime: now.toISOString(),
-          signatureDataUrl: stampDataUrl,
-          isWalkIn: false,
-          checkInHrVerified: true,
-          hrVerified: true,
-          checkInHrVerifiedAt: now.toISOString(),
-          notes: '人事單位現場直接簽到覆核'
-        };
+    if (type !== 'checkin') return;
 
-        nextCheckIns = [newRecord, ...base.checkIns];
-      } else {
-        nextCheckIns = base.checkIns;
-      }
+    // 尚未簽到但人事按下覆核 → 直接以人事覆核章完成簽到
+    const now = new Date();
+    const canvas = document.createElement('canvas');
+    canvas.width = 240;
+    canvas.height = 80;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, 240, 80);
+      ctx.strokeStyle = '#4f46e5';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(10, 10, 220, 60);
+      ctx.fillStyle = '#4f46e5';
+      ctx.font = 'bold 15px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('人事單位現場簽到覆核', 120, 36);
+      ctx.font = '11px sans-serif';
+      ctx.fillText(now.toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' }), 120, 56);
+    }
+    const stampDataUrl = canvas.toDataURL('image/jpeg', 0.8);
 
-      return {
-        ...base,
-        checkIns: nextCheckIns
-      };
-    });
+    runSync(writeCheckIn({
+      id: `hr-checkin-${now.getTime()}`,
+      participantId: targetAttendee.id,
+      name: targetAttendee.name,
+      title: targetAttendee.title,
+      department: targetAttendee.department,
+      checkInTime: now.toISOString(),
+      signatureDataUrl: stampDataUrl,
+      isWalkIn: false,
+      checkInHrVerified: true,
+      hrVerified: true,
+      checkInHrVerifiedAt: now.toISOString(),
+      notes: '人事單位現場直接簽到覆核'
+    }, action, 'organizer'));
   };
 
   // Combined real-time attendee comparison list (傳入 eventInfo 完整包含路途時間與扣除時間設定)
   const combinedAttendees = buildCombinedAttendeeList(roster, checkIns, eventInfo);
+
+  // 恢復連線時，補發先前沒配發成功的序號
+  useEffect(() => {
+    if (syncStatus === 'synced' && pendingSerialIdsRef.current.size > 0) runSerialWorker();
+  }, [syncStatus]);
+
+  // 承辦人後台開著時：補發所有缺號的現場追加人員 (依簽到時間先後)，
+  // 確保學員手機已關閉或離線時，序號也一定會補上
+  const missingSerialKey = combinedAttendees
+    .filter(a => a.status === 'WALK_IN' && a.serialNo === undefined && a.checkInId)
+    .sort((a, b) => (a.checkInTime || '').localeCompare(b.checkInTime || ''))
+    .map(a => a.checkInId as string)
+    .join(',');
+  useEffect(() => {
+    if (!isOrganizerAuthenticated || !missingSerialKey || syncStatus !== 'synced') return;
+    missingSerialKey.split(',').forEach(id => pendingSerialIdsRef.current.add(id));
+    runSerialWorker();
+  }, [isOrganizerAuthenticated, missingSerialKey, syncStatus]);
+
+  // 承辦人後台開著時：名冊有缺號或重複的人，從最大號往後補發 (舊資料轉換)
+  const rosterNeedsSerials = !rosterSerialsComplete(roster);
+  useEffect(() => {
+    if (!isOrganizerAuthenticated || !rosterNeedsSerials || syncStatus !== 'synced') return;
+    normalizeRosterSerials().catch(err => console.warn('[Serial] roster normalize failed:', err));
+  }, [isOrganizerAuthenticated, rosterNeedsSerials, syncStatus]);
 
   const checkedInCount = combinedAttendees.filter(
     a => a.status === 'CHECKED_IN' || a.status === 'WALK_IN'
@@ -680,6 +692,8 @@ export default function App() {
         totalExpectedCount={roster.length}
         myDeviceId={myDeviceIdRef.current}
         lastSyncInfo={lastSyncInfo}
+        syncStatus={syncStatus}
+        syncError={syncError}
       />
 
       {/* Main Content Area */}
@@ -692,6 +706,8 @@ export default function App() {
             onCheckInSuccess={handleCheckInSuccess}
             onNavigateToDashboard={() => handleRequestSwitchMode('dashboard')}
           />
+        ) : activeMode === 'vip' ? (
+          <VipStatusBoard eventInfo={eventInfo} attendees={combinedAttendees} />
         ) : activeMode === 'checkout' ? (
           <CheckOutForm
             eventInfo={eventInfo}
@@ -709,6 +725,7 @@ export default function App() {
             checkIns={checkIns}
             attendees={combinedAttendees}
             onUpdateEventInfo={handleUpdateEventInfo}
+            onUpdateSubmitWindow={handleUpdateSubmitWindow}
             onImportRoster={handleImportRoster}
             onAddRosterParticipant={handleAddRosterParticipant}
             onDeleteRosterParticipant={handleDeleteRosterParticipant}
@@ -718,6 +735,7 @@ export default function App() {
             onRemoveCheckIn={handleRemoveCheckIn}
             onResetAllCheckIns={handleResetAllCheckIns}
             onToggleHrVerify={handleToggleHrVerify}
+            onToggleVip={handleToggleVip}
             onNavigateToCheckIn={() => handleRequestSwitchMode('checkin')}
             onNavigateToCheckOut={() => handleRequestSwitchMode('checkout')}
             onLogout={handleOrganizerLogout}
@@ -733,7 +751,7 @@ export default function App() {
             <span>·</span>
             <span className="text-emerald-700 font-medium flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              手機與電腦全端以最新更新為基準即時同步
+              手機與電腦透過雲端資料庫即時同步
             </span>
           </div>
           <div className="flex items-center gap-3 text-slate-400">
@@ -743,6 +761,8 @@ export default function App() {
                 ? '現場學員手寫簽到'
                 : activeMode === 'checkout'
                 ? '學員簽退端 (參加時間主動計算)'
+                : activeMode === 'vip'
+                ? '貴賓報到情形'
                 : '承辦人比對後台 (已解鎖)'}
             </span>
             <span>·</span>

@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { CombinedAttendeeView, EventInfo, RegisteredParticipant } from '../types';
+import { vipFromRow } from './vip';
 
 /**
  * Intelligent column mapping for Excel/CSV import
@@ -96,6 +97,8 @@ export function parseSpreadsheet(data: ArrayBuffer): {
       phone,
       email,
       customFields,
+      // Excel「貴賓」欄位 (是 / V / Y / ✓ / 1) → 預先標記為貴賓
+      ...(vipFromRow(row) ? { isVip: true } : {}),
       registeredAt: new Date().toISOString()
     });
   });
@@ -128,12 +131,13 @@ export function exportToExcel(attendees: CombinedAttendeeView[], eventInfo: Even
   const exportRows = attendees.map((item, idx) => {
     const row: Record<string, any> = {
       '項次': idx + 1,
+      '序號': item.serialNo ?? '—',
       '姓名': item.name,
       '職稱': item.title || '—',
       '部門/單位': item.department || '—',
       '報到狀態': statusLabels[item.status] || item.status,
-      '簽到時間': item.checkInTime ? new Date(item.checkInTime).toLocaleString('zh-TW', { hour12: false }) : '—',
-      '簽退時間': item.checkOutTime ? new Date(item.checkOutTime).toLocaleString('zh-TW', { hour12: false }) : (item.checkInTime ? '未簽退' : '—'),
+      '簽到時間': item.checkInTime ? new Date(item.checkInTime).toLocaleString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' }) : '—',
+      '簽退時間': item.checkOutTime ? new Date(item.checkOutTime).toLocaleString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' }) : (item.checkInTime ? '未簽退' : '—'),
       '參加時間(計算)': item.durationDisplay || (item.checkInTime ? '研習中(未簽退)' : '—'),
       '參加時間(分鐘)': item.durationMinutes ?? '—'
     };
@@ -182,6 +186,7 @@ export function exportToCsv(attendees: CombinedAttendeeView[], eventInfo: EventI
 
   const headers = [
     '項次',
+    '序號',
     '姓名',
     '職稱',
     '部門/單位',
@@ -213,12 +218,13 @@ export function exportToCsv(attendees: CombinedAttendeeView[], eventInfo: EventI
   const rows = attendees.map((item, idx) => {
     const rowVals: any[] = [
       idx + 1,
+      `"${item.serialNo ?? '—'}"`,
       `"${item.name.replace(/"/g, '""')}"`,
       `"${(item.title || '—').replace(/"/g, '""')}"`,
       `"${(item.department || '—').replace(/"/g, '""')}"`,
       `"${statusLabels[item.status] || item.status}"`,
-      `"${item.checkInTime ? new Date(item.checkInTime).toLocaleString('zh-TW', { hour12: false }) : '—'}"`,
-      `"${item.checkOutTime ? new Date(item.checkOutTime).toLocaleString('zh-TW', { hour12: false }) : (item.checkInTime ? '未簽退' : '—')}"`,
+      `"${item.checkInTime ? new Date(item.checkInTime).toLocaleString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' }) : '—'}"`,
+      `"${item.checkOutTime ? new Date(item.checkOutTime).toLocaleString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' }) : (item.checkInTime ? '未簽退' : '—')}"`,
       `"${(item.durationDisplay || (item.checkInTime ? '研習中(未簽退)' : '—')).replace(/"/g, '""')}"`,
       `"${item.durationMinutes ?? '—'}"`
     ];
@@ -249,7 +255,7 @@ export function exportToCsv(attendees: CombinedAttendeeView[], eventInfo: EventI
 
   const csvContent = '\uFEFF' + [
     `# 活動名稱: "${eventInfo.title.replace(/"/g, '""')}"`,
-    `# 匯出時間: "${new Date().toLocaleString('zh-TW', { hour12: false })}"`,
+    `# 匯出時間: "${new Date().toLocaleString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' })}"`,
     headers.join(','),
     ...rows.map(r => r.join(','))
   ].join('\r\n');
@@ -304,10 +310,12 @@ export function downloadSampleRoster(type: 'excel' | 'csv' = 'excel') {
 }
 
 function formatDateForFilename(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  const hh = String(date.getHours()).padStart(2, '0');
-  const mm = String(date.getMinutes()).padStart(2, '0');
+  // 以台灣時間 (UTC+8，無日光節約) 命名檔案
+  const tw = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+  const y = tw.getUTCFullYear();
+  const m = String(tw.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(tw.getUTCDate()).padStart(2, '0');
+  const hh = String(tw.getUTCHours()).padStart(2, '0');
+  const mm = String(tw.getUTCMinutes()).padStart(2, '0');
   return `${y}${m}${d}_${hh}${mm}`;
 }

@@ -16,10 +16,21 @@ export interface EventInfo {
   // 附件1 (報到手續完成畫面) 欄位顯示設定
   completionDisplayFields?: string[]; // 勾選要呈現於報到完成畫面的名冊欄位清單
   availableRosterColumns?: string[]; // 名冊目前所有可用欄位
+  // 開放時段：學員只能在時段內送出簽到 / 簽退 (承辦人後台操作不受限制)
+  checkInWindow?: SubmitWindow;
+  checkOutWindow?: SubmitWindow;
+}
+
+export interface SubmitWindow {
+  enabled: boolean; // false = 不限制，隨時可送出
+  startMs?: number; // 開始時間 (毫秒時間戳)，未設定 = 立即開放
+  endMs?: number; // 截止時間 (毫秒時間戳)，未設定 = 不截止
 }
 
 export interface RegisteredParticipant {
   id: string;
+  serialNo?: number; // 序號 (取自 Excel「編號」，或依序配發)
+  isVip?: boolean; // 重要貴賓 (承辦人後台勾選，或 Excel「貴賓」欄位)
   name: string;
   title: string;
   department?: string;
@@ -32,6 +43,8 @@ export interface RegisteredParticipant {
 
 export interface CheckInRecord {
   id: string;
+  serialNo?: number; // 現場追加人員的序號 (目前最大序號 + 1；名冊人員用名冊上的序號)
+  isVip?: boolean; // 現場追加人員的貴賓標記 (名冊人員的標記存在名冊上)
   participantId?: string; // If matched to pre-registered
   name: string;
   title: string;
@@ -60,12 +73,21 @@ export interface CheckInRecord {
   compTimeMinutes?: number; // 核予補休時間 ("參加時間" + "路途時間" - "扣除時間"，單位分鐘)
   compTimeDisplay?: string; // 核予補休時間文字
   customFields?: Record<string, string>; // 學員名冊所屬之自訂欄位
+  // Firebase 同步資訊 (最後由哪台裝置、何時、做了什麼修改)
+  syncUpdatedAt?: number;
+  syncModifiedBy?: string;
+  syncAction?: string;
+  syncSource?: 'student' | 'organizer';
 }
+
+export type SyncStatus = 'connecting' | 'synced' | 'pending' | 'offline' | 'error';
 
 export type AttendeeStatus = 'CHECKED_IN' | 'NOT_CHECKED_IN' | 'WALK_IN';
 
 export interface CombinedAttendeeView {
   id: string;
+  serialNo?: number; // 序號 (名冊人員取名冊序號；現場追加取簽到紀錄上的序號)
+  isVip?: boolean; // 重要貴賓
   checkInId?: string;
   name: string;
   title: string;
