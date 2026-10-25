@@ -21,7 +21,13 @@ import { assignRosterSerials, maxRosterSerial, parseSerial, rosterSerialsComplet
 /**
  * Firebase 設定。
  * 這些值本來就會出現在前端網頁中，不是密碼；資料安全由 Firestore 安全規則 (firestore.rules) 控管。
- * 若要切換到其他 Firebase 專案，可在 .env.local 或 Vercel 環境變數設定 VITE_FIREBASE_* 覆蓋。
+ * 不需要設定任何環境變數，預設就連到 sanyi-checkin 專案。
+ *
+ * (選用) 要切換到其他 Firebase 專案或活動時，可在 .env.local 或 Vercel 環境變數設定：
+ *   VITE_FIREBASE_API_KEY、VITE_FIREBASE_AUTH_DOMAIN、VITE_FIREBASE_PROJECT_ID、
+ *   VITE_FIREBASE_STORAGE_BUCKET、VITE_FIREBASE_MESSAGING_SENDER_ID、VITE_FIREBASE_APP_ID、
+ *   VITE_FIREBASE_EVENT_ID (活動代號；正式網站預設 sanyi-main，預覽與本機開發預設 sanyi-preview)
+ * 這些刻意不列在 .env.example，避免 Google AI Studio 每次開啟都要求填寫。
  */
 const env = import.meta.env;
 const firebaseConfig = {
