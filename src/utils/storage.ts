@@ -245,6 +245,7 @@ export function buildCombinedAttendeeList(
       list.push({
         id: p.id,
         serialNo: rosterSerialOf(p),
+        isVip: Boolean(p.isVip),
         checkInId: matchedCheckIn.id,
         name: p.name,
         title: p.title,
@@ -279,6 +280,7 @@ export function buildCombinedAttendeeList(
       list.push({
         id: p.id,
         serialNo: rosterSerialOf(p),
+        isVip: Boolean(p.isVip),
         name: p.name,
         title: p.title,
         department: p.department,
@@ -320,6 +322,7 @@ export function buildCombinedAttendeeList(
       list.push({
         id: c.id,
         serialNo: parseSerial(c.serialNo),
+        isVip: Boolean(c.isVip),
         checkInId: c.id,
         name: c.name,
         title: c.title || '現場追加人員',

@@ -1,12 +1,12 @@
 import React from 'react';
 import { EventInfo, SyncStatus } from '../types';
-import { Calendar, MapPin, UserCheck, LayoutDashboard, Clock, Sparkles, Lock, Unlock, LogOut, RefreshCw, Wifi } from 'lucide-react';
+import { Calendar, MapPin, UserCheck, LayoutDashboard, Clock, Sparkles, Lock, Unlock, LogOut, Star } from 'lucide-react';
 
 interface EventHeaderProps {
   eventInfo: EventInfo;
   onUpdateEventInfo: (updated: EventInfo) => void;
-  activeMode: 'checkin' | 'checkout' | 'dashboard';
-  onRequestSwitchMode: (mode: 'checkin' | 'checkout' | 'dashboard') => void;
+  activeMode: 'checkin' | 'checkout' | 'vip' | 'dashboard';
+  onRequestSwitchMode: (mode: 'checkin' | 'checkout' | 'vip' | 'dashboard') => void;
   isOrganizerAuthenticated: boolean;
   onOrganizerLogout: () => void;
   checkedInCount: number;
@@ -147,7 +147,7 @@ export const EventHeader: React.FC<EventHeaderProps> = ({
               </div>
 
               {/* Mode Switcher Tabs */}
-              <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200">
+              <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200">
                 <button
                   type="button"
                   onClick={() => onRequestSwitchMode('checkin')}
@@ -172,6 +172,19 @@ export const EventHeader: React.FC<EventHeaderProps> = ({
                 >
                   <LogOut className="w-4 h-4" />
                   <span>學員簽退端</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onRequestSwitchMode('vip')}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    activeMode === 'vip'
+                      ? 'bg-orange-500 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                  }`}
+                >
+                  <Star className="w-4 h-4" />
+                  <span>貴賓報到情形</span>
                 </button>
 
                 <button

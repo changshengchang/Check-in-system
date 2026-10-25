@@ -41,7 +41,8 @@ import {
   Save,
   X,
   CheckSquare,
-  Square
+  Square,
+  Star
 } from 'lucide-react';
 
 import { SubmitWindowPanel } from './SubmitWindowPanel';
@@ -67,6 +68,7 @@ interface DashboardProps {
   onRemoveCheckIn: (attendeeId: string, checkInId?: string, attendeeName?: string) => void;
   onResetAllCheckIns: () => void;
   onToggleHrVerify: (attendeeId: string, type: 'checkin' | 'checkout') => void;
+  onToggleVip?: (attendeeId: string) => void;
   onNavigateToCheckIn: () => void;
   onNavigateToCheckOut: () => void;
   onLogout?: () => void;
@@ -88,11 +90,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onRemoveCheckIn,
   onResetAllCheckIns,
   onToggleHrVerify,
+  onToggleVip,
   onNavigateToCheckIn,
   onNavigateToCheckOut,
   onLogout
 }) => {
-  const [activeTab, setActiveTab] = useState<'all' | 'checked_in' | 'not_checked_in' | 'walk_in' | 'checked_out' | 'checkin_verified' | 'checkout_verified' | 'roster_upload'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'checked_in' | 'not_checked_in' | 'walk_in' | 'checked_out' | 'checkin_verified' | 'checkout_verified' | 'vip' | 'roster_upload'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState<string>('all');
   const [selectedSignature, setSelectedSignature] = useState<{ name: string; url: string; time?: string; title?: string } | null>(null);
@@ -126,6 +129,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const walkInList = attendees.filter(a => a.status === 'WALK_IN');
   const totalCheckedIn = checkedInList.length + walkInList.length;
   const checkedOutList = attendees.filter(a => a.checkOutTime);
+  const vipList = attendees.filter(a => a.isVip);
   const checkInVerifiedList = attendees.filter(a => a.checkInHrVerified || a.hrVerified);
   const checkOutVerifiedList = attendees.filter(a => a.checkOutHrVerified);
 
@@ -139,7 +143,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   // Organizer display preferences
   const showTravel = eventInfo.showTravelTime !== false;
   const showDeduction = !!eventInfo.showDeductionTime;
-  const colSpanCount = 12 + (showTravel ? 1 : 0) + (showDeduction ? 1 : 0);
+  const colSpanCount = 13 + (showTravel ? 1 : 0) + (showDeduction ? 1 : 0);
 
   // Available roster columns for Attachment 1 (學員完成畫面呈現欄位)
   const allKnownColumns = Array.from(
@@ -162,6 +166,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     if (activeTab === 'checked_out' && !attendee.checkOutTime) return false;
     if (activeTab === 'checkin_verified' && !(attendee.checkInHrVerified || attendee.hrVerified)) return false;
     if (activeTab === 'checkout_verified' && !attendee.checkOutHrVerified) return false;
+    if (activeTab === 'vip' && !attendee.isVip) return false;
 
     // Search query
     // 姓名、職稱、部門、序號 (完全符合)、電話 (3 碼以上)
@@ -481,6 +486,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
             <button
               type="button"
+              onClick={() => setActiveTab('vip')}
+              data-testid="tab-vip"
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeTab === 'vip'
+                  ? 'bg-orange-500 text-white shadow-xs'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+              }`}
+            >
+              <Star className={`w-3.5 h-3.5 ${activeTab === 'vip' ? 'text-white fill-current' : 'text-orange-500'}`} />
+              <span>重要貴賓</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${activeTab === 'vip' ? 'bg-orange-700 text-white' : 'bg-orange-50 text-orange-700 font-bold'}`}>
+                {vipList.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setActiveTab('checkin_verified')}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                 activeTab === 'checkin_verified'
@@ -702,6 +724,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
                     <tr>
                       <th className="py-3 px-3 w-12 text-center">序號</th>
+                      <th className="py-3 px-2 w-12 text-center">貴賓</th>
                       <th className="py-3 px-3">參加人員姓名</th>
                       <th className="py-3 px-3">職稱 (Job Title)</th>
                       <th className="py-3 px-3">部門/單位</th>
@@ -754,6 +777,27 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               ) : (
                                 <span className="text-[10px] font-normal text-slate-400" title="序號配發中，連線後自動補上">配發中</span>
                               )}
+                            </td>
+
+                            {/* 重要貴賓標記 (點擊勾選 / 取消) */}
+                            <td className="py-3 px-2 text-center">
+                              <button
+                                type="button"
+                                onClick={() => onToggleVip?.(attendee.id)}
+                                disabled={!onToggleVip}
+                                role="checkbox"
+                                aria-checked={Boolean(attendee.isVip)}
+                                aria-label={`${attendee.name} 貴賓標記`}
+                                data-testid="vip-toggle"
+                                title={attendee.isVip ? '已標記為重要貴賓，點擊取消' : '點擊標記為重要貴賓'}
+                                className={`inline-flex items-center justify-center w-8 h-8 rounded-lg border transition-colors cursor-pointer ${
+                                  attendee.isVip
+                                    ? 'bg-orange-50 border-orange-300 text-orange-500 hover:bg-orange-100'
+                                    : 'bg-white border-slate-200 text-slate-300 hover:text-orange-400 hover:border-orange-200'
+                                }`}
+                              >
+                                <Star className={`w-4 h-4 ${attendee.isVip ? 'fill-current' : ''}`} />
+                              </button>
                             </td>
 
                             {/* Name */}

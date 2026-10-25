@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { CombinedAttendeeView, EventInfo, RegisteredParticipant } from '../types';
+import { vipFromRow } from './vip';
 
 /**
  * Intelligent column mapping for Excel/CSV import
@@ -96,6 +97,8 @@ export function parseSpreadsheet(data: ArrayBuffer): {
       phone,
       email,
       customFields,
+      // Excel「貴賓」欄位 (是 / V / Y / ✓ / 1) → 預先標記為貴賓
+      ...(vipFromRow(row) ? { isVip: true } : {}),
       registeredAt: new Date().toISOString()
     });
   });

@@ -38,6 +38,8 @@ import { CheckInForm } from './components/CheckInForm';
 import { CheckOutForm } from './components/CheckOutForm';
 import { Dashboard } from './components/Dashboard';
 import { OrganizerAuthModal } from './components/OrganizerAuthModal';
+import { VipStatusBoard } from './components/VipStatusBoard';
+import { setRosterVip } from './utils/vip';
 
 /** 新的在最上面 (與原本 unshift 的順序一致) */
 function sortCheckIns(list: CheckInRecord[]): CheckInRecord[] {
@@ -67,7 +69,7 @@ export default function App() {
   const [eventInfo, setEventInfo] = useState<EventInfo>(() => loadEventInfo());
   const [roster, setRoster] = useState<RegisteredParticipant[]>(() => loadRoster());
   const [checkIns, setCheckIns] = useState<CheckInRecord[]>(() => loadCheckIns());
-  const [activeMode, setActiveMode] = useState<'checkin' | 'checkout' | 'dashboard'>('checkin');
+  const [activeMode, setActiveMode] = useState<'checkin' | 'checkout' | 'vip' | 'dashboard'>('checkin');
 
   const myDeviceIdRef = useRef<string>(getDeviceId());
 
@@ -261,8 +263,8 @@ export default function App() {
     Boolean(name && c.name.trim().toLowerCase() === name.trim().toLowerCase());
 
   // Request mode switcher with password gate
-  const handleRequestSwitchMode = (targetMode: 'checkin' | 'checkout' | 'dashboard') => {
-    if (targetMode === 'checkin' || targetMode === 'checkout') {
+  const handleRequestSwitchMode = (targetMode: 'checkin' | 'checkout' | 'vip' | 'dashboard') => {
+    if (targetMode === 'checkin' || targetMode === 'checkout' || targetMode === 'vip') {
       setActiveMode(targetMode);
     } else {
       if (isOrganizerAuthenticated) {
@@ -557,6 +559,19 @@ export default function App() {
     runSync(deleteCheckIns(ids, `取消報到: ${attendeeName || attendeeId}`));
   };
 
+  // 7b. 貴賓標記 (名冊人員存在名冊上；現場追加存在簽到紀錄上)
+  const handleToggleVip = (attendeeId: string) => {
+    const target = combinedAttendees.find(a => a.id === attendeeId);
+    if (!target) return;
+    const next = !target.isVip;
+    const action = `${next ? '標記' : '取消'}貴賓: ${target.name}`;
+    if (target.status === 'WALK_IN' && target.checkInId) {
+      runSync(updateCheckIn(target.checkInId, { isVip: next }, action, 'organizer'));
+    } else {
+      runEventMutation(action, base => ({ ...base, roster: setRosterVip(base.roster, attendeeId, next) }));
+    }
+  };
+
   // 8. 清空所有簽到紀錄
   const handleResetAllCheckIns = () => {
     runSync(deleteAllCheckIns('重設所有簽到紀錄'));
@@ -691,6 +706,8 @@ export default function App() {
             onCheckInSuccess={handleCheckInSuccess}
             onNavigateToDashboard={() => handleRequestSwitchMode('dashboard')}
           />
+        ) : activeMode === 'vip' ? (
+          <VipStatusBoard eventInfo={eventInfo} attendees={combinedAttendees} />
         ) : activeMode === 'checkout' ? (
           <CheckOutForm
             eventInfo={eventInfo}
@@ -718,6 +735,7 @@ export default function App() {
             onRemoveCheckIn={handleRemoveCheckIn}
             onResetAllCheckIns={handleResetAllCheckIns}
             onToggleHrVerify={handleToggleHrVerify}
+            onToggleVip={handleToggleVip}
             onNavigateToCheckIn={() => handleRequestSwitchMode('checkin')}
             onNavigateToCheckOut={() => handleRequestSwitchMode('checkout')}
             onLogout={handleOrganizerLogout}
@@ -743,6 +761,8 @@ export default function App() {
                 ? '現場學員手寫簽到'
                 : activeMode === 'checkout'
                 ? '學員簽退端 (參加時間主動計算)'
+                : activeMode === 'vip'
+                ? '貴賓報到情形'
                 : '承辦人比對後台 (已解鎖)'}
             </span>
             <span>·</span>
