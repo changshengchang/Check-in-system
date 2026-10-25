@@ -196,6 +196,22 @@ export function assignWalkInSerial(checkInId: string) {
   });
 }
 
+/**
+ * 簽到覆核逾時作廢：刪除前在交易中再確認一次「仍未覆核且期限已到」，
+ * 避免承辦人剛好在最後一刻按下覆核時被誤刪。回傳是否真的刪除。
+ */
+export function expireUnverifiedCheckIn(checkInId: string, nowMs: number) {
+  return runTransaction(db, async tx => {
+    const snap = await tx.get(checkInDocRef(checkInId));
+    if (!snap.exists()) return false;
+    const rec = snap.data() as CheckInRecord;
+    const verified = Boolean(rec.checkInHrVerified ?? rec.hrVerified);
+    if (verified || typeof rec.verifyDeadlineMs !== 'number' || nowMs < rec.verifyDeadlineMs) return false;
+    tx.delete(checkInDocRef(checkInId));
+    return true;
+  });
+}
+
 /** 名冊中缺序號或序號重複的人員，從目前最大號往後補發 (舊資料轉換用；已完整則不寫入) */
 export function normalizeRosterSerials() {
   return runTransaction(db, async tx => {

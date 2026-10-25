@@ -1,13 +1,26 @@
 import React, { useState } from 'react';
 import { Lock, KeyRound, Eye, EyeOff, AlertCircle, X, ShieldCheck } from 'lucide-react';
 
+export type StaffRole = 'organizer' | 'helper';
+
 interface OrganizerAuthModalProps {
   isOpen: boolean;
-  onSuccess: () => void;
+  onSuccess: (role: StaffRole) => void;
   onClose: () => void;
 }
 
-const REQUIRED_PASSWORD = 'nick620504';
+/**
+ * 承辦人：完整管理權限；協助人員：只能查詢與簽到/簽退覆核。
+ * 注意：密碼寫在前端程式中，權限只在畫面上限制。
+ */
+const ROLE_PASSWORDS: Record<string, StaffRole> = {
+  nick620504: 'organizer',
+  user1234: 'helper'
+};
+
+export function roleForPassword(password: string): StaffRole | null {
+  return Object.prototype.hasOwnProperty.call(ROLE_PASSWORDS, password) ? ROLE_PASSWORDS[password] : null;
+}
 
 export const OrganizerAuthModal: React.FC<OrganizerAuthModalProps> = ({
   isOpen,
@@ -22,10 +35,11 @@ export const OrganizerAuthModal: React.FC<OrganizerAuthModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (password === REQUIRED_PASSWORD) {
+    const role = roleForPassword(password);
+    if (role) {
       setError(false);
       setPassword('');
-      onSuccess();
+      onSuccess(role);
     } else {
       setError(true);
     }
@@ -57,7 +71,7 @@ export const OrganizerAuthModal: React.FC<OrganizerAuthModalProps> = ({
           承辦人管理後台驗證
         </h3>
         <p className="text-xs text-slate-500 mt-1">
-          此區域包含名冊管理、簽到比對及資料下載功能，請輸入承辦人驗證密碼以繼續存取。
+          請輸入承辦人或協助人員密碼。協助人員僅能查詢名單與進行簽到／簽退覆核。
         </p>
 
         <form onSubmit={handleSubmit} className="mt-5 space-y-4">
