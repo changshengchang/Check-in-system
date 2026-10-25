@@ -35,14 +35,27 @@ export function fieldValue(a: CombinedAttendeeView, field: string): string | und
 
 export const isCheckedIn = (a: CombinedAttendeeView) => a.status === 'CHECKED_IN' || a.status === 'WALK_IN';
 
-/** 只找已報到的人：姓名 (部分符合) 或序號 (完全符合，可加 #) */
-export function searchCheckedIn(attendees: CombinedAttendeeView[], query: string, limit = 20): CombinedAttendeeView[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return [];
-  const serialMatch = /^#?\s*(\d+)$/.exec(q);
-  const serial = serialMatch ? parseSerial(serialMatch[1]) : undefined;
+/** 所有已報到的人，最新報到在最上面 (同時間依序號) */
+export function listCheckedInNewestFirst(attendees: CombinedAttendeeView[]): CombinedAttendeeView[] {
+  const t = (a: CombinedAttendeeView) => {
+    const ms = a.checkInTime ? new Date(a.checkInTime).getTime() : NaN;
+    return isNaN(ms) ? -Infinity : ms;
+  };
   return attendees
     .filter(isCheckedIn)
-    .filter(a => a.name.toLowerCase().includes(q) || (serial !== undefined && a.serialNo === serial))
-    .slice(0, limit);
+    .map((a, i) => ({ a, i }))
+    .sort((x, y) => (t(y.a) - t(x.a)) || ((x.a.serialNo ?? Infinity) - (y.a.serialNo ?? Infinity)) || (x.i - y.i))
+    .map(x => x.a);
+}
+
+/**
+ * 已報到名單 (最新報到在最上面)；有輸入時依姓名 (部分符合) 或序號 (完全符合，可加 #) 篩選
+ */
+export function searchCheckedIn(attendees: CombinedAttendeeView[], query: string): CombinedAttendeeView[] {
+  const list = listCheckedInNewestFirst(attendees);
+  const q = query.trim().toLowerCase();
+  if (!q) return list;
+  const serialMatch = /^#?\s*(\d+)$/.exec(q);
+  const serial = serialMatch ? parseSerial(serialMatch[1]) : undefined;
+  return list.filter(a => a.name.toLowerCase().includes(q) || (serial !== undefined && a.serialNo === serial));
 }

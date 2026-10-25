@@ -51,7 +51,7 @@ export const CheckInLookup: React.FC<CheckInLookupProps> = ({ eventInfo, attende
           <span>報到資訊查詢</span>
         </div>
         <h2 className="text-xl sm:text-2xl font-black mt-1 truncate">{eventInfo.title}</h2>
-        <p className="text-xs text-teal-50 mt-1">輸入姓名或序號，查詢您的序號、{fields.length ? fields.join('、') + '、' : ''}報到與覆核狀態</p>
+        <p className="text-xs text-teal-50 mt-1">已報到的人都會列在下方（最新報到在最上面），也可以輸入姓名或序號快速找到自己</p>
       </div>
 
       {/* This device's recent check-ins */}
@@ -85,7 +85,7 @@ export const CheckInLookup: React.FC<CheckInLookupProps> = ({ eventInfo, attende
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="輸入姓名或序號"
+          placeholder="輸入姓名或序號搜尋"
           data-testid="lookup-input"
           className="w-full pl-11 pr-10 py-3 rounded-2xl border-2 border-slate-200 focus:border-teal-500 focus:outline-hidden text-base bg-white"
         />
@@ -96,19 +96,22 @@ export const CheckInLookup: React.FC<CheckInLookupProps> = ({ eventInfo, attende
         )}
       </div>
 
-      {query.trim() && (
-        results.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-sm text-slate-500" data-testid="lookup-empty">
-            查無已報到的資料
-            <div className="text-xs text-slate-400 mt-1">請確認姓名或序號；尚未報到或報到已失效的人不會顯示</div>
-          </div>
-        ) : (
-          <ul className="bg-white rounded-2xl border border-slate-200 shadow-xs divide-y divide-slate-100 overflow-hidden" data-testid="lookup-results">
-            {results.map(a => (
-              <ResultCard key={a.id} a={a} fields={fields} now={now} />
-            ))}
-          </ul>
-        )
+      {/* 已報到名單：預設全部列出，最新報到在最上面；有輸入時篩選 */}
+      <div className="flex items-center justify-between text-xs text-slate-500 px-1">
+        <span className="font-bold text-slate-700">{query.trim() ? '搜尋結果' : '已報到名單（最新在上）'}</span>
+        <span data-testid="lookup-count">{results.length} 位</span>
+      </div>
+      {results.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-sm text-slate-500" data-testid="lookup-empty">
+          {query.trim() ? '查無已報到的資料' : '目前還沒有人報到'}
+          <div className="text-xs text-slate-400 mt-1">尚未報到或報到已失效的人不會顯示</div>
+        </div>
+      ) : (
+        <ul className="bg-white rounded-2xl border border-slate-200 shadow-xs divide-y divide-slate-100 overflow-hidden" data-testid="lookup-results">
+          {results.map(a => (
+            <ResultCard key={a.id} a={a} fields={fields} now={now} />
+          ))}
+        </ul>
       )}
     </div>
   );
@@ -117,41 +120,38 @@ export const CheckInLookup: React.FC<CheckInLookupProps> = ({ eventInfo, attende
 const ResultCard: React.FC<{ a: CombinedAttendeeView; fields: string[]; now: number }> = ({ a, fields, now }) => {
   const verified = isCheckInVerified(a);
   const remaining = verifyRemainingMs(a, now);
+  const boxes: { label: string; value: string; big?: boolean }[] = [
+    { label: '您的序號', value: a.serialNo !== undefined ? String(a.serialNo) : '配發中', big: true },
+    { label: '職稱', value: a.title || '—' },
+    { label: '報到時間', value: twTime(a.checkInTime) },
+    ...fields.map(f => ({ label: f, value: fieldValue(a, f) ?? '—' }))
+  ];
   return (
     <li className="px-4 py-4" data-testid="lookup-result">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="font-mono font-black text-teal-700 text-lg">{a.serialNo !== undefined ? `#${a.serialNo}` : '—'}</span>
-            <span className="font-black text-slate-900 text-lg truncate">{a.name}</span>
-          </div>
-          {a.title && <div className="text-xs text-slate-500 mt-0.5">{a.title}</div>}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <UserCheck className="w-5 h-5 text-teal-600 shrink-0" />
+          <span className="font-black text-slate-900 text-lg truncate">{a.name}</span>
+          {a.isWalkIn && <span className="shrink-0 text-[10px] bg-amber-100 text-amber-800 px-1.5 rounded font-semibold">現場追加</span>}
         </div>
-        <div className="shrink-0 text-right text-xs space-y-1">
-          <div className="text-slate-600 flex items-center justify-end gap-1">
-            <UserCheck className="w-3.5 h-3.5" /> {twTime(a.checkInTime)} 報到
-          </div>
-          {verified ? (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold" data-testid="lookup-verified">
-              <CheckCircle2 className="w-3.5 h-3.5" /> 已覆核
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold" data-testid="lookup-pending">
-              <Timer className="w-3.5 h-3.5" /> 未覆核{remaining !== undefined ? `（剩 ${formatCountdown(remaining)}）` : ''}
-            </span>
-          )}
-        </div>
+        {verified ? (
+          <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold" data-testid="lookup-verified">
+            <CheckCircle2 className="w-3.5 h-3.5" /> 已覆核
+          </span>
+        ) : (
+          <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-bold" data-testid="lookup-pending">
+            <Timer className="w-3.5 h-3.5" /> 未覆核{remaining !== undefined ? `（剩 ${formatCountdown(remaining)}）` : ''}
+          </span>
+        )}
       </div>
-      {fields.length > 0 && (
-        <dl className="mt-3 grid grid-cols-2 gap-2">
-          {fields.map(f => (
-            <div key={f} className="bg-slate-50 rounded-xl px-3 py-2">
-              <dt className="text-[11px] text-slate-500">{f}</dt>
-              <dd className="text-base font-bold text-slate-900">{fieldValue(a, f) ?? '—'}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
+      <dl className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {boxes.map(b => (
+          <div key={b.label} className="bg-slate-50 rounded-xl px-3 py-2 min-w-0">
+            <dt className="text-[11px] text-slate-500">{b.label}</dt>
+            <dd className={`font-bold text-slate-900 truncate ${b.big ? 'text-xl font-mono text-teal-700' : 'text-base'}`}>{b.value}</dd>
+          </div>
+        ))}
+      </dl>
     </li>
   );
 };
