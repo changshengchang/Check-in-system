@@ -4,6 +4,7 @@ import { CheckInRecord, EventInfo, RegisteredParticipant } from '../types';
 import { SignaturePad, SignaturePadHandle } from './SignaturePad';
 import { SubmitWindowNotice, getWindowBlockedMessage } from './SubmitWindowNotice';
 import { useSubmitWindow, getWindowStatus, serverNow } from '../utils/submitWindow';
+import { rosterSerialOf, parseSerial } from '../utils/serial';
 import {
   UserCheck,
   CheckCircle2,
@@ -496,6 +497,25 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
 
             {/* Check-in Details Card */}
             <div className="mt-5 p-4 rounded-2xl bg-slate-50 border border-slate-200 text-left space-y-2 text-xs">
+              {(() => {
+                // 序號：名冊人員取名冊序號；現場追加等雲端配發後即時顯示
+                const rosterPerson = roster.find(p =>
+                  (recentCheckedIn.participantId && p.id === recentCheckedIn.participantId) ||
+                  p.name.trim().toLowerCase() === recentCheckedIn.name.trim().toLowerCase()
+                );
+                const live = existingCheckIns.find(c => c.id === recentCheckedIn.id);
+                const serial = rosterPerson ? rosterSerialOf(rosterPerson) : parseSerial(live?.serialNo);
+                return (
+                  <div className="flex justify-between items-center py-1.5 border-b border-slate-200">
+                    <span className="text-slate-500">您的序號</span>
+                    {serial !== undefined ? (
+                      <span className="font-black text-2xl text-blue-700 font-mono" data-testid="success-serial">{serial}</span>
+                    ) : (
+                      <span className="text-xs text-slate-400" data-testid="success-serial-pending">序號產生中…</span>
+                    )}
+                  </div>
+                );
+              })()}
               <div className="flex justify-between items-center py-1 border-b border-slate-200">
                 <span className="text-slate-500">參加學員</span>
                 <span className="font-bold text-slate-900 text-sm">{recentCheckedIn.name}</span>
@@ -540,6 +560,7 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
                   const norm = field.trim().toLowerCase();
                   if (norm === '姓名' || norm === 'name') return;
                   if (norm === '職稱' || norm === '部門') return; // already rendered in top rows
+                  if (norm === '編號' || norm === '序號') return; // 已顯示在「您的序號」
 
                   let val: string | undefined;
                   if (recentCheckedIn.customFields && recentCheckedIn.customFields[field]) {

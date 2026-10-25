@@ -1,4 +1,5 @@
 import { CheckInRecord, CombinedAttendeeView, EventInfo, RegisteredParticipant } from '../types';
+import { rosterSerialOf, parseSerial, sortBySerial } from './serial';
 
 const STORAGE_KEY_EVENT = 'training_app_event_info';
 const STORAGE_KEY_ROSTER = 'training_app_roster';
@@ -243,6 +244,7 @@ export function buildCombinedAttendeeList(
 
       list.push({
         id: p.id,
+        serialNo: rosterSerialOf(p),
         checkInId: matchedCheckIn.id,
         name: p.name,
         title: p.title,
@@ -276,6 +278,7 @@ export function buildCombinedAttendeeList(
     } else {
       list.push({
         id: p.id,
+        serialNo: rosterSerialOf(p),
         name: p.name,
         title: p.title,
         department: p.department,
@@ -316,6 +319,7 @@ export function buildCombinedAttendeeList(
 
       list.push({
         id: c.id,
+        serialNo: parseSerial(c.serialNo),
         checkInId: c.id,
         name: c.name,
         title: c.title || '現場追加人員',
@@ -349,5 +353,6 @@ export function buildCombinedAttendeeList(
     }
   });
 
-  return list;
+  // 依序號排列：名冊在前，現場追加 (序號最大) 在最後
+  return sortBySerial(list);
 }

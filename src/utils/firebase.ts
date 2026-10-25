@@ -16,6 +16,7 @@ import {
 } from 'firebase/firestore';
 import { CheckInRecord, EventInfo, RegisteredParticipant } from '../types';
 import { getDeviceId } from './cloudSync';
+import { assignRosterSerials, maxRosterSerial, parseSerial, rosterSerialsComplete } from './serial';
 
 /**
  * Firebase 設定。
@@ -61,6 +62,8 @@ const checkInDocRef = (id: string) => doc(db, 'events', EVENT_ID, 'checkIns', id
 export interface EventDocData {
   eventInfo: EventInfo;
   roster: RegisteredParticipant[];
+  /** 序號計數器：目前已發出的最大序號 (不回收；清空簽到紀錄時回到名冊最大號) */
+  lastSerialNo?: number;
   updatedAt?: number;
   lastModifiedBy?: string;
   actionDescription?: string;
@@ -115,10 +118,16 @@ export async function deleteCheckIns(ids: string[], action: string) {
   }
 }
 
-/** 從伺服器讀取全部簽到紀錄後刪除 (避免本機資料不完整而漏刪) */
+/** 從伺服器讀取全部簽到紀錄後刪除 (避免本機資料不完整而漏刪)，並把序號計數器歸零到名冊最大號 */
 export async function deleteAllCheckIns(action: string) {
   const snap = await getDocs(checkInsColRef);
   await deleteCheckIns(snap.docs.map(d => d.id), action);
+  await runTransaction(db, async tx => {
+    const ev = await tx.get(eventDocRef);
+    if (!ev.exists()) return;
+    const roster: RegisteredParticipant[] = Array.isArray(ev.data().roster) ? ev.data().roster : [];
+    tx.update(eventDocRef, { lastSerialNo: maxRosterSerial(roster) });
+  });
 }
 
 function eventMeta(action: string) {
@@ -143,11 +152,61 @@ export function mutateEvent(
     const current: EventDocData = snap.exists()
       ? {
           eventInfo: (snap.data().eventInfo as EventInfo) || fallback.eventInfo,
-          roster: Array.isArray(snap.data().roster) ? snap.data().roster : fallback.roster
+          roster: Array.isArray(snap.data().roster) ? snap.data().roster : fallback.roster,
+          lastSerialNo: parseSerial(snap.data().lastSerialNo)
         }
       : fallback;
     const next = mutation(current);
-    tx.set(eventDocRef, { eventInfo: next.eventInfo, roster: next.roster, ...eventMeta(action) });
+    tx.set(eventDocRef, {
+      eventInfo: next.eventInfo,
+      roster: next.roster,
+      // 修改沒有指定計數器時沿用雲端的值；任何情況都不會小於名冊最大號
+      lastSerialNo: Math.max(next.lastSerialNo ?? current.lastSerialNo ?? 0, maxRosterSerial(next.roster)),
+      ...eventMeta(action)
+    });
+  });
+}
+
+/**
+ * 替「現場追加」的簽到紀錄配發序號 = 目前最大序號 + 1
+ * 用交易取號：兩台裝置同時取號也不會拿到同一個號碼。
+ * 回傳配發到的序號；紀錄不存在、已有序號、或其實是名冊人員時回傳已有序號或 null。
+ */
+export function assignWalkInSerial(checkInId: string) {
+  return runTransaction(db, async tx => {
+    const evSnap = await tx.get(eventDocRef);
+    const recSnap = await tx.get(checkInDocRef(checkInId));
+    // 紀錄已被取消 (刪除) → 不配發
+    if (!evSnap.exists() || !recSnap.exists()) return null;
+
+    const rec = recSnap.data() as CheckInRecord;
+    const existing = parseSerial(rec.serialNo);
+    if (existing !== undefined) return existing;
+
+    // 名冊上有這個人 (比對 ID 或姓名) → 用名冊序號，不另外配發
+    const roster: RegisteredParticipant[] = Array.isArray(evSnap.data().roster) ? evSnap.data().roster : [];
+    const name = (rec.name || '').trim().toLowerCase();
+    const inRoster = roster.some(p => (rec.participantId && p.id === rec.participantId) || p.name.trim().toLowerCase() === name);
+    if (inRoster) return null;
+
+    const next = Math.max(parseSerial(evSnap.data().lastSerialNo) ?? 0, maxRosterSerial(roster)) + 1;
+    tx.update(eventDocRef, { lastSerialNo: next });
+    tx.update(checkInDocRef(checkInId), { serialNo: next });
+    return next;
+  });
+}
+
+/** 名冊中缺序號或序號重複的人員，從目前最大號往後補發 (舊資料轉換用；已完整則不寫入) */
+export function normalizeRosterSerials() {
+  return runTransaction(db, async tx => {
+    const evSnap = await tx.get(eventDocRef);
+    if (!evSnap.exists()) return false;
+    const roster: RegisteredParticipant[] = Array.isArray(evSnap.data().roster) ? evSnap.data().roster : [];
+    if (rosterSerialsComplete(roster)) return false;
+    const counter = parseSerial(evSnap.data().lastSerialNo) ?? 0;
+    const result = assignRosterSerials(roster, counter);
+    tx.update(eventDocRef, { roster: result.roster, lastSerialNo: Math.max(counter, result.lastSerialNo) });
+    return true;
   });
 }
 
@@ -165,9 +224,11 @@ export async function ensureEventSeeded(getSeed: () => Promise<EventDocData & { 
   const created = await runTransaction(db, async tx => {
     const snap = await tx.get(eventDocRef);
     if (snap.exists()) return false;
+    const numbered = assignRosterSerials(seed.roster);
     tx.set(eventDocRef, {
       eventInfo: seed.eventInfo,
-      roster: seed.roster,
+      roster: numbered.roster,
+      lastSerialNo: numbered.lastSerialNo,
       ...eventMeta('初始化活動資料')
     });
     return true;

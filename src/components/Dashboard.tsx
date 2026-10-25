@@ -45,6 +45,7 @@ import {
 } from 'lucide-react';
 
 import { SubmitWindowPanel } from './SubmitWindowPanel';
+import { matchesAttendeeSearch, rosterSerialOf } from '../utils/serial';
 interface DashboardProps {
   eventInfo: EventInfo;
   roster: RegisteredParticipant[];
@@ -163,13 +164,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
     if (activeTab === 'checkout_verified' && !attendee.checkOutHrVerified) return false;
 
     // Search query
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
-      const matchName = attendee.name.toLowerCase().includes(q);
-      const matchTitle = attendee.title.toLowerCase().includes(q);
-      const matchDept = attendee.department ? attendee.department.toLowerCase().includes(q) : false;
-      if (!matchName && !matchTitle && !matchDept) return false;
-    }
+    // 姓名、職稱、部門、序號 (完全符合)、電話 (3 碼以上)
+    if (searchQuery.trim() && !matchesAttendeeSearch(attendee, searchQuery)) return false;
 
     // Department filter
     if (departmentFilter !== 'all' && attendee.department !== departmentFilter) {
@@ -629,7 +625,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 {roster.map((p, idx) => (
                   <div key={p.id} className="p-3 flex items-center justify-between hover:bg-slate-50">
                     <div className="flex items-center gap-3">
-                      <span className="font-mono text-slate-400 text-[11px] w-6">#{idx + 1}</span>
+                      <span className="font-mono text-slate-400 text-[11px] w-6">#{rosterSerialOf(p) ?? '—'}</span>
                       <span className="font-bold text-slate-800 text-sm">{p.name}</span>
                       <span className="text-slate-600 bg-slate-100 px-2 py-0.5 rounded text-[11px]">
                         {p.title}
@@ -664,7 +660,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   type="text"
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  placeholder="搜尋人員姓名、職稱或部門..."
+                  placeholder="搜尋序號、姓名、電話、職稱或部門..."
                   className="w-full pl-9 pr-3 py-1.5 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-xs bg-slate-50 focus:bg-white"
                 />
                 {searchQuery && (
@@ -752,8 +748,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         return (
                           <tr key={attendee.id} className="hover:bg-slate-50/80 transition-colors">
                             {/* # */}
-                            <td className="py-3 px-3 text-center text-slate-400 font-mono text-[11px]">
-                              {idx + 1}
+                            <td className="py-3 px-3 text-center font-mono text-xs font-bold text-slate-600" data-testid="serial-cell">
+                              {attendee.serialNo !== undefined ? (
+                                attendee.serialNo
+                              ) : (
+                                <span className="text-[10px] font-normal text-slate-400" title="序號配發中，連線後自動補上">配發中</span>
+                              )}
                             </td>
 
                             {/* Name */}

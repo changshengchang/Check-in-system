@@ -128,6 +128,7 @@ export function exportToExcel(attendees: CombinedAttendeeView[], eventInfo: Even
   const exportRows = attendees.map((item, idx) => {
     const row: Record<string, any> = {
       '項次': idx + 1,
+      '序號': item.serialNo ?? '—',
       '姓名': item.name,
       '職稱': item.title || '—',
       '部門/單位': item.department || '—',
@@ -182,6 +183,7 @@ export function exportToCsv(attendees: CombinedAttendeeView[], eventInfo: EventI
 
   const headers = [
     '項次',
+    '序號',
     '姓名',
     '職稱',
     '部門/單位',
@@ -213,6 +215,7 @@ export function exportToCsv(attendees: CombinedAttendeeView[], eventInfo: EventI
   const rows = attendees.map((item, idx) => {
     const rowVals: any[] = [
       idx + 1,
+      `"${item.serialNo ?? '—'}"`,
       `"${item.name.replace(/"/g, '""')}"`,
       `"${(item.title || '—').replace(/"/g, '""')}"`,
       `"${(item.department || '—').replace(/"/g, '""')}"`,

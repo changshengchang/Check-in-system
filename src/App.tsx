@@ -7,6 +7,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { onSnapshot, type SnapshotMetadata } from 'firebase/firestore';
 import { EventInfo, RegisteredParticipant, CheckInRecord, SyncStatus, SubmitWindow } from './types';
 import { syncServerClock } from './utils/submitWindow';
+import { importRosterWithSerials, addParticipantWithSerial, walkInSerials, rosterSerialsComplete } from './utils/serial';
 import {
   loadEventInfo,
   saveEventInfo,
@@ -24,6 +25,8 @@ import {
   checkInsColRef,
   ensureEventSeeded,
   mutateEvent,
+  assignWalkInSerial,
+  normalizeRosterSerials,
   writeCheckIn,
   updateCheckIn,
   deleteCheckIns,
@@ -80,6 +83,8 @@ export default function App() {
 
   // 最後一次從雲端收到的活動資料，交易失敗時用來還原畫面
   const lastEventSnapshotRef = useRef<EventDocData | null>(null);
+  // 雲端序號計數器 (目前已發出的最大序號)
+  const [lastSerialNo, setLastSerialNo] = useState<number | undefined>(undefined);
 
   // Organizer Authentication state
   const [isOrganizerAuthenticated, setIsOrganizerAuthenticated] = useState<boolean>(() => {
@@ -137,6 +142,7 @@ export default function App() {
         }
         if (Array.isArray(data.roster)) {
           setRoster(data.roster);
+          setLastSerialNo(typeof data.lastSerialNo === 'number' ? data.lastSerialNo : undefined);
           saveRoster(data.roster);
         }
         if (!snap.metadata.hasPendingWrites) {
@@ -205,7 +211,7 @@ export default function App() {
 
   // 活動資訊與名冊：先更新畫面，再以交易寫入雲端 (以雲端最新名冊為基礎套用修改)
   const runEventMutation = (action: string, mutation: (current: EventDocData) => EventDocData) => {
-    const current = { eventInfo, roster };
+    const current = { eventInfo, roster, lastSerialNo };
     const optimistic = mutation(current);
     setEventInfo(optimistic.eventInfo);
     setRoster(optimistic.roster);
@@ -217,6 +223,36 @@ export default function App() {
         setRoster(last.roster);
       }
     });
+  };
+
+  /* ---------------- 現場追加序號配發 ---------------- */
+  // 待配發序號的簽到紀錄 ID (本機送出的現場追加；承辦人後台另會補發所有缺號者)
+  const pendingSerialIdsRef = useRef<Set<string>>(new Set());
+  const serialWorkerBusyRef = useRef(false);
+
+  const runSerialWorker = async () => {
+    if (serialWorkerBusyRef.current) return;
+    serialWorkerBusyRef.current = true;
+    try {
+      // 一次處理一筆，依加入順序取號
+      for (const id of Array.from(pendingSerialIdsRef.current)) {
+        try {
+          await assignWalkInSerial(id);
+          pendingSerialIdsRef.current.delete(id);
+        } catch (err) {
+          // 離線或衝突：保留在待辦清單，連線恢復後再試
+          console.warn('[Serial] assign failed, will retry:', (err as { code?: string })?.code || err);
+          break;
+        }
+      }
+    } finally {
+      serialWorkerBusyRef.current = false;
+    }
+  };
+
+  const requestWalkInSerial = (checkInId: string) => {
+    pendingSerialIdsRef.current.add(checkInId);
+    runSerialWorker();
   };
 
   const isSamePerson = (c: CheckInRecord, attendeeId: string, name?: string) =>
@@ -287,11 +323,20 @@ export default function App() {
       c => (record.participantId && c.participantId === record.participantId) ||
            c.name.trim().toLowerCase() === cleanName
     );
-    return runSync(
-      writeCheckIn({ ...record, id: existing ? existing.id : record.id }, `學員報到: ${record.name}`, source),
+    const id = existing ? existing.id : record.id;
+    const result = runSync(
+      writeCheckIn({ ...record, id }, `學員報到: ${record.name}`, source),
       undefined,
       source === 'student' ? 'checkin' : undefined
     );
+    // 名冊上沒有的人 → 現場追加：等雲端確認收到簽到後，配發序號 (目前最大號 + 1)
+    const inRoster = roster.some(p => (record.participantId && p.id === record.participantId) || p.name.trim().toLowerCase() === cleanName);
+    if (!inRoster) {
+      result.then(rejectReason => {
+        if (!rejectReason) requestWalkInSerial(id);
+      });
+    }
+    return result;
   };
 
   // 3. 匯入名冊 (Excel/CSV)
@@ -301,29 +346,24 @@ export default function App() {
     selectedColumns?: string[],
     allColumns?: string[]
   ) => {
+    const usedByWalkIns = walkInSerials(checkIns);
     runEventMutation(`匯入名冊 (${newParticipants.length}人)`, base => {
-      let nextRoster: RegisteredParticipant[];
-      if (mode === 'replace') {
-        nextRoster = newParticipants;
-      } else {
-        const existingNames = new Set(base.roster.map(p => p.name.trim().toLowerCase()));
-        const filteredNew = newParticipants.filter(p => !existingNames.has(p.name.trim().toLowerCase()));
-        nextRoster = [...base.roster, ...filteredNew];
-      }
+      // 序號取自 Excel「編號」欄位，缺漏或重複者從最大號往後補發
+      const numbered = importRosterWithSerials(base.roster, base.lastSerialNo, newParticipants, mode, usedByWalkIns);
       const nextEventInfo: EventInfo = {
         ...base.eventInfo,
         ...(selectedColumns && selectedColumns.length > 0 ? { completionDisplayFields: selectedColumns } : {}),
         ...(allColumns && allColumns.length > 0 ? { availableRosterColumns: allColumns } : {})
       };
-      return { eventInfo: nextEventInfo, roster: nextRoster };
+      return { eventInfo: nextEventInfo, roster: numbered.roster, lastSerialNo: numbered.lastSerialNo };
     });
   };
 
   // 4. 手動新增學員
   const handleAddRosterParticipant = (p: RegisteredParticipant) => {
     runEventMutation(`新增學員: ${p.name}`, base => {
-      const exists = base.roster.some(x => x.id === p.id || (x.name.trim() === p.name.trim() && x.title === p.title));
-      return { ...base, roster: exists ? base.roster : [...base.roster, p] };
+      const numbered = addParticipantWithSerial(base.roster, base.lastSerialNo, p);
+      return { ...base, roster: numbered.roster, lastSerialNo: numbered.lastSerialNo };
     });
   };
 
@@ -593,6 +633,31 @@ export default function App() {
 
   // Combined real-time attendee comparison list (傳入 eventInfo 完整包含路途時間與扣除時間設定)
   const combinedAttendees = buildCombinedAttendeeList(roster, checkIns, eventInfo);
+
+  // 恢復連線時，補發先前沒配發成功的序號
+  useEffect(() => {
+    if (syncStatus === 'synced' && pendingSerialIdsRef.current.size > 0) runSerialWorker();
+  }, [syncStatus]);
+
+  // 承辦人後台開著時：補發所有缺號的現場追加人員 (依簽到時間先後)，
+  // 確保學員手機已關閉或離線時，序號也一定會補上
+  const missingSerialKey = combinedAttendees
+    .filter(a => a.status === 'WALK_IN' && a.serialNo === undefined && a.checkInId)
+    .sort((a, b) => (a.checkInTime || '').localeCompare(b.checkInTime || ''))
+    .map(a => a.checkInId as string)
+    .join(',');
+  useEffect(() => {
+    if (!isOrganizerAuthenticated || !missingSerialKey || syncStatus !== 'synced') return;
+    missingSerialKey.split(',').forEach(id => pendingSerialIdsRef.current.add(id));
+    runSerialWorker();
+  }, [isOrganizerAuthenticated, missingSerialKey, syncStatus]);
+
+  // 承辦人後台開著時：名冊有缺號或重複的人，從最大號往後補發 (舊資料轉換)
+  const rosterNeedsSerials = !rosterSerialsComplete(roster);
+  useEffect(() => {
+    if (!isOrganizerAuthenticated || !rosterNeedsSerials || syncStatus !== 'synced') return;
+    normalizeRosterSerials().catch(err => console.warn('[Serial] roster normalize failed:', err));
+  }, [isOrganizerAuthenticated, rosterNeedsSerials, syncStatus]);
 
   const checkedInCount = combinedAttendees.filter(
     a => a.status === 'CHECKED_IN' || a.status === 'WALK_IN'

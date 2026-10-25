@@ -29,6 +29,7 @@ export interface SubmitWindow {
 
 export interface RegisteredParticipant {
   id: string;
+  serialNo?: number; // 序號 (取自 Excel「編號」，或依序配發)
   name: string;
   title: string;
   department?: string;
@@ -41,6 +42,7 @@ export interface RegisteredParticipant {
 
 export interface CheckInRecord {
   id: string;
+  serialNo?: number; // 現場追加人員的序號 (目前最大序號 + 1；名冊人員用名冊上的序號)
   participantId?: string; // If matched to pre-registered
   name: string;
   title: string;
@@ -82,6 +84,7 @@ export type AttendeeStatus = 'CHECKED_IN' | 'NOT_CHECKED_IN' | 'WALK_IN';
 
 export interface CombinedAttendeeView {
   id: string;
+  serialNo?: number; // 序號 (名冊人員取名冊序號；現場追加取簽到紀錄上的序號)
   checkInId?: string;
   name: string;
   title: string;
