@@ -19,6 +19,8 @@ export interface EventInfo {
   // 開放時段：學員只能在時段內送出簽到 / 簽退 (承辦人後台操作不受限制)
   checkInWindow?: SubmitWindow;
   checkOutWindow?: SubmitWindow;
+  // 簽到覆核期限 (分鐘)：學員自行簽到後須在期限內完成簽到覆核，逾時自動作廢；0 = 不作廢，未設定 = 15
+  verifyTimeoutMinutes?: number;
 }
 
 export interface SubmitWindow {
@@ -45,6 +47,7 @@ export interface CheckInRecord {
   id: string;
   serialNo?: number; // 現場追加人員的序號 (目前最大序號 + 1；名冊人員用名冊上的序號)
   isVip?: boolean; // 現場追加人員的貴賓標記 (名冊人員的標記存在名冊上)
+  verifyDeadlineMs?: number; // 學員自行簽到時設定：此時間前未完成簽到覆核即作廢 (伺服器時間)
   participantId?: string; // If matched to pre-registered
   name: string;
   title: string;
@@ -88,6 +91,7 @@ export interface CombinedAttendeeView {
   id: string;
   serialNo?: number; // 序號 (名冊人員取名冊序號；現場追加取簽到紀錄上的序號)
   isVip?: boolean; // 重要貴賓
+  verifyDeadlineMs?: number; // 簽到覆核期限 (學員自行簽到才有)
   checkInId?: string;
   name: string;
   title: string;

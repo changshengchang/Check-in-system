@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { onSnapshot, type SnapshotMetadata } from 'firebase/firestore';
 import { EventInfo, RegisteredParticipant, CheckInRecord, SyncStatus, SubmitWindow } from './types';
-import { syncServerClock } from './utils/submitWindow';
+import { syncServerClock, serverNow } from './utils/submitWindow';
 import { importRosterWithSerials, addParticipantWithSerial, walkInSerials, rosterSerialsComplete } from './utils/serial';
 import {
   loadEventInfo,
@@ -27,6 +27,7 @@ import {
   mutateEvent,
   assignWalkInSerial,
   normalizeRosterSerials,
+  expireUnverifiedCheckIn,
   writeCheckIn,
   updateCheckIn,
   deleteCheckIns,
@@ -37,7 +38,10 @@ import { EventHeader } from './components/EventHeader';
 import { CheckInForm } from './components/CheckInForm';
 import { CheckOutForm } from './components/CheckOutForm';
 import { Dashboard } from './components/Dashboard';
-import { OrganizerAuthModal } from './components/OrganizerAuthModal';
+import { OrganizerAuthModal, StaffRole } from './components/OrganizerAuthModal';
+import { CheckInLookup } from './components/CheckInLookup';
+import { isVerifyExpired, nextVerifyExpiry, isCheckInVerified } from './utils/verify';
+import { rememberMyCheckIn } from './utils/myCheckIns';
 import { VipStatusBoard } from './components/VipStatusBoard';
 import { setRosterVip } from './utils/vip';
 
@@ -69,7 +73,7 @@ export default function App() {
   const [eventInfo, setEventInfo] = useState<EventInfo>(() => loadEventInfo());
   const [roster, setRoster] = useState<RegisteredParticipant[]>(() => loadRoster());
   const [checkIns, setCheckIns] = useState<CheckInRecord[]>(() => loadCheckIns());
-  const [activeMode, setActiveMode] = useState<'checkin' | 'checkout' | 'vip' | 'dashboard'>('checkin');
+  const [activeMode, setActiveMode] = useState<'checkin' | 'checkout' | 'lookup' | 'vip' | 'dashboard'>('checkin');
 
   const myDeviceIdRef = useRef<string>(getDeviceId());
 
@@ -88,14 +92,18 @@ export default function App() {
   // 雲端序號計數器 (目前已發出的最大序號)
   const [lastSerialNo, setLastSerialNo] = useState<number | undefined>(undefined);
 
-  // Organizer Authentication state
-  const [isOrganizerAuthenticated, setIsOrganizerAuthenticated] = useState<boolean>(() => {
+  // 後台登入身分：organizer = 承辦人 (完整權限)；helper = 協助人員 (只能查詢與覆核)
+  const [staffRole, setStaffRole] = useState<StaffRole | null>(() => {
     try {
-      return sessionStorage.getItem('organizer_auth_verified') === 'true';
+      const saved = sessionStorage.getItem('organizer_auth_role');
+      if (saved === 'organizer' || saved === 'helper') return saved;
+      return sessionStorage.getItem('organizer_auth_verified') === 'true' ? 'organizer' : null;
     } catch {
-      return false;
+      return null;
     }
   });
+  const isOrganizerAuthenticated = staffRole !== null;
+  const isOrganizer = staffRole === 'organizer';
   const [showAuthModal, setShowAuthModal] = useState(false);
 
   const noteSyncInfo = (updatedAt: number | undefined, device: string | undefined, action: string | undefined) => {
@@ -263,8 +271,8 @@ export default function App() {
     Boolean(name && c.name.trim().toLowerCase() === name.trim().toLowerCase());
 
   // Request mode switcher with password gate
-  const handleRequestSwitchMode = (targetMode: 'checkin' | 'checkout' | 'vip' | 'dashboard') => {
-    if (targetMode === 'checkin' || targetMode === 'checkout' || targetMode === 'vip') {
+  const handleRequestSwitchMode = (targetMode: 'checkin' | 'checkout' | 'lookup' | 'vip' | 'dashboard') => {
+    if (targetMode !== 'dashboard') {
       setActiveMode(targetMode);
     } else {
       if (isOrganizerAuthenticated) {
@@ -275,10 +283,11 @@ export default function App() {
     }
   };
 
-  const handleAuthSuccess = () => {
-    setIsOrganizerAuthenticated(true);
+  const handleAuthSuccess = (role: StaffRole) => {
+    setStaffRole(role);
     try {
-      sessionStorage.setItem('organizer_auth_verified', 'true');
+      sessionStorage.setItem('organizer_auth_role', role);
+      sessionStorage.removeItem('organizer_auth_verified');
     } catch {
       // ignore
     }
@@ -287,8 +296,9 @@ export default function App() {
   };
 
   const handleOrganizerLogout = () => {
-    setIsOrganizerAuthenticated(false);
+    setStaffRole(null);
     try {
+      sessionStorage.removeItem('organizer_auth_role');
       sessionStorage.removeItem('organizer_auth_verified');
     } catch {
       // ignore
@@ -300,18 +310,30 @@ export default function App() {
   // 開放時段只由 handleUpdateSubmitWindow 修改，這裡保留雲端上的設定，
   // 避免編輯活動資訊時用畫面上的舊資料蓋掉另一台裝置剛改的時段
   const handleUpdateEventInfo = (updated: EventInfo) => {
+    if (!isOrganizer) return; // 協助人員無此權限
     runEventMutation('修改活動資訊', cur => ({
       ...cur,
       eventInfo: {
         ...updated,
         checkInWindow: cur.eventInfo.checkInWindow,
-        checkOutWindow: cur.eventInfo.checkOutWindow
+        checkOutWindow: cur.eventInfo.checkOutWindow,
+        verifyTimeoutMinutes: cur.eventInfo.verifyTimeoutMinutes
       }
+    }));
+  };
+
+  // 1c. 簽到覆核期限 (分鐘，0 = 不作廢)；只影響之後送出的簽到
+  const handleUpdateVerifyTimeout = (minutes: number) => {
+    if (!isOrganizer) return;
+    runEventMutation(minutes > 0 ? `設定簽到覆核期限 ${minutes} 分鐘` : '取消簽到覆核期限', cur => ({
+      ...cur,
+      eventInfo: { ...cur.eventInfo, verifyTimeoutMinutes: minutes }
     }));
   };
 
   // 1b. 設定簽到 / 簽退開放時段 (只改這一個欄位)
   const handleUpdateSubmitWindow = (kind: 'checkin' | 'checkout', window: SubmitWindow) => {
+    if (!isOrganizer) return; // 協助人員無此權限
     const key = kind === 'checkin' ? 'checkInWindow' : 'checkOutWindow';
     const label = kind === 'checkin' ? '簽到' : '簽退';
     const desc = !window.enabled ? `取消${label}時段限制` : `設定${label}開放時段`;
@@ -321,13 +343,19 @@ export default function App() {
   // 2. 學員簽到 (同一人已有紀錄時，覆蓋原本那筆)
   const handleCheckInSuccess = (record: CheckInRecord, source: 'student' | 'organizer' = 'student') => {
     const cleanName = record.name.trim().toLowerCase();
-    const existing = checkIns.find(
-      c => (record.participantId && c.participantId === record.participantId) ||
-           c.name.trim().toLowerCase() === cleanName
-    );
+    const samePerson = (c: CheckInRecord) =>
+      Boolean(record.participantId && c.participantId === record.participantId) || c.name.trim().toLowerCase() === cleanName;
+    // 同一人逾時作廢的舊紀錄先清掉，重新簽到使用新的紀錄 (現場追加會拿新序號)
+    checkIns
+      .filter(c => samePerson(c) && isVerifyExpired(c, serverNow()))
+      .forEach(c => expireUnverifiedCheckIn(c.id, serverNow()).catch(() => {}));
+    const existing = activeCheckIns.find(samePerson);
     const id = existing ? existing.id : record.id;
+    // 覆核期限只適用學員自行簽到；承辦人協助報到不設期限
+    const toWrite: CheckInRecord = source === 'student' ? { ...record, id } : { ...record, id, verifyDeadlineMs: undefined };
+    if (source === 'student') rememberMyCheckIn(id, record.name);
     const result = runSync(
-      writeCheckIn({ ...record, id }, `學員報到: ${record.name}`, source),
+      writeCheckIn(toWrite, `學員報到: ${record.name}`, source),
       undefined,
       source === 'student' ? 'checkin' : undefined
     );
@@ -348,6 +376,7 @@ export default function App() {
     selectedColumns?: string[],
     allColumns?: string[]
   ) => {
+    if (!isOrganizer) return; // 協助人員無此權限
     const usedByWalkIns = walkInSerials(checkIns);
     runEventMutation(`匯入名冊 (${newParticipants.length}人)`, base => {
       // 序號取自 Excel「編號」欄位，缺漏或重複者從最大號往後補發
@@ -363,6 +392,7 @@ export default function App() {
 
   // 4. 手動新增學員
   const handleAddRosterParticipant = (p: RegisteredParticipant) => {
+    if (!isOrganizer) return; // 協助人員無此權限
     runEventMutation(`新增學員: ${p.name}`, base => {
       const numbered = addParticipantWithSerial(base.roster, base.lastSerialNo, p);
       return { ...base, roster: numbered.roster, lastSerialNo: numbered.lastSerialNo };
@@ -371,6 +401,7 @@ export default function App() {
 
   // 5. 從名冊刪除學員
   const handleDeleteRosterParticipant = (id: string) => {
+    if (!isOrganizer) return; // 協助人員無此權限
     const target = roster.find(p => p.id === id);
     const targetName = target ? target.name : '學員';
     runEventMutation(`刪除學員: ${targetName}`, base => ({
@@ -381,6 +412,7 @@ export default function App() {
 
   // 6. 承辦人手動協助報到
   const handleManualCheckIn = (attendee: { id: string; name: string; title: string; department?: string; phone?: string; email?: string; customFields?: Record<string, string> }) => {
+    if (!isOrganizer) return; // 協助人員無此權限
     const canvas = document.createElement('canvas');
     canvas.width = 240;
     canvas.height = 80;
@@ -466,6 +498,7 @@ export default function App() {
 
   // 6c. 承辦人從後台協助簽退
   const handleManualCheckOut = (attendeeId: string) => {
+    if (!isOrganizer) return; // 協助人員無此權限
     const target = combinedAttendees.find(a => a.id === attendeeId);
     if (!target) return;
 
@@ -525,6 +558,7 @@ export default function App() {
 
   // 6d. 更新個別學員的路途時間
   const handleUpdateTravelTime = (attendeeId: string, minutes: number) => {
+    if (!isOrganizer) return; // 協助人員無此權限
     const targetAttendee = combinedAttendees.find(a => a.id === attendeeId);
     const targetName = targetAttendee ? targetAttendee.name : '學員';
     const action = `更新路途時間: ${targetName} (${minutes}分鐘)`;
@@ -553,6 +587,7 @@ export default function App() {
 
   // 7. 取消單一學員的報到 (比對紀錄 ID、名冊 ID 與姓名)
   const handleRemoveCheckIn = (attendeeId: string, checkInId?: string, attendeeName?: string) => {
+    if (!isOrganizer) return; // 協助人員無此權限
     const ids = checkIns
       .filter(c => (checkInId && c.id === checkInId) || isSamePerson(c, attendeeId, attendeeName))
       .map(c => c.id);
@@ -561,6 +596,7 @@ export default function App() {
 
   // 7b. 貴賓標記 (名冊人員存在名冊上；現場追加存在簽到紀錄上)
   const handleToggleVip = (attendeeId: string) => {
+    if (!isOrganizer) return; // 協助人員無此權限
     const target = combinedAttendees.find(a => a.id === attendeeId);
     if (!target) return;
     const next = !target.isVip;
@@ -574,6 +610,7 @@ export default function App() {
 
   // 8. 清空所有簽到紀錄
   const handleResetAllCheckIns = () => {
+    if (!isOrganizer) return; // 協助人員無此權限
     runSync(deleteAllCheckIns('重設所有簽到紀錄'));
   };
 
@@ -600,14 +637,16 @@ export default function App() {
             runSync(updateCheckIn(c.id, {
               checkInHrVerified: nextVerified,
               hrVerified: nextVerified,
-              checkInHrVerifiedAt: nextVerified ? nowIso : undefined
+              checkInHrVerifiedAt: nextVerified ? nowIso : undefined,
+              // 覆核後期限即解除；之後即使誤按取消覆核，也不會因逾時被作廢
+              ...(nextVerified ? { verifyDeadlineMs: undefined } : {})
             }, action, 'organizer'));
           }
         });
       return;
     }
 
-    if (type !== 'checkin') return;
+    if (type !== 'checkin' || !isOrganizer) return; // 協助人員不可代為報到
 
     // 尚未簽到但人事按下覆核 → 直接以人事覆核章完成簽到
     const now = new Date();
@@ -647,7 +686,37 @@ export default function App() {
   };
 
   // Combined real-time attendee comparison list (傳入 eventInfo 完整包含路途時間與扣除時間設定)
-  const combinedAttendees = buildCombinedAttendeeList(roster, checkIns, eventInfo);
+  // 簽到覆核逾時作廢：到期那一刻重新整理畫面，所有畫面只看「有效」的簽到紀錄
+  const [, setExpiryTick] = useState(0);
+  const nowMs = serverNow();
+  const nextExpiry = nextVerifyExpiry(checkIns, nowMs);
+  useEffect(() => {
+    if (nextExpiry === undefined) return;
+    const timer = setTimeout(() => setExpiryTick(t => t + 1), Math.max(0, nextExpiry - serverNow()) + 50);
+    return () => clearTimeout(timer);
+  }, [nextExpiry]);
+  const activeCheckIns = checkIns.filter(c => !isVerifyExpired(c, nowMs));
+  const expiredIdsKey = checkIns.filter(c => isVerifyExpired(c, nowMs)).map(c => c.id).join(',');
+
+  // 後台開著時 (承辦人或協助人員)，自動刪除逾時未覆核的紀錄
+  const expiringRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!isOrganizerAuthenticated || !expiredIdsKey) return;
+    expiredIdsKey.split(',').forEach(id => {
+      if (expiringRef.current.has(id)) return;
+      expiringRef.current.add(id);
+      expireUnverifiedCheckIn(id, serverNow())
+        .catch(err => console.warn('[Verify] expire failed, will retry:', (err as { code?: string })?.code || err))
+        .finally(() => expiringRef.current.delete(id));
+    });
+  }, [isOrganizerAuthenticated, expiredIdsKey, syncStatus]);
+
+  // 學員報到成功頁倒數結束時呼叫
+  const handleExpireCheckIn = (checkInId: string) => {
+    expireUnverifiedCheckIn(checkInId, serverNow()).catch(() => {});
+  };
+
+  const combinedAttendees = buildCombinedAttendeeList(roster, activeCheckIns, eventInfo);
 
   // 恢復連線時，補發先前沒配發成功的序號
   useEffect(() => {
@@ -687,6 +756,7 @@ export default function App() {
         activeMode={activeMode}
         onRequestSwitchMode={handleRequestSwitchMode}
         isOrganizerAuthenticated={isOrganizerAuthenticated}
+        staffRole={staffRole}
         onOrganizerLogout={handleOrganizerLogout}
         checkedInCount={checkedInCount}
         totalExpectedCount={roster.length}
@@ -702,9 +772,18 @@ export default function App() {
           <CheckInForm
             eventInfo={eventInfo}
             roster={roster}
-            existingCheckIns={checkIns}
+            existingCheckIns={activeCheckIns}
             onCheckInSuccess={handleCheckInSuccess}
+            onExpireCheckIn={handleExpireCheckIn}
+            onNavigateToLookup={() => handleRequestSwitchMode('lookup')}
             onNavigateToDashboard={() => handleRequestSwitchMode('dashboard')}
+          />
+        ) : activeMode === 'lookup' ? (
+          <CheckInLookup
+            eventInfo={eventInfo}
+            attendees={combinedAttendees}
+            onNavigateToCheckIn={() => handleRequestSwitchMode('checkin')}
+            dataReady={syncStatus !== 'connecting'}
           />
         ) : activeMode === 'vip' ? (
           <VipStatusBoard eventInfo={eventInfo} attendees={combinedAttendees} />
@@ -712,7 +791,7 @@ export default function App() {
           <CheckOutForm
             eventInfo={eventInfo}
             attendees={combinedAttendees}
-            existingCheckIns={checkIns}
+            existingCheckIns={activeCheckIns}
             onCheckOutSuccess={handleCheckOutSuccess}
             onToggleHrVerify={handleToggleHrVerify}
             onNavigateToCheckIn={() => handleRequestSwitchMode('checkin')}
@@ -722,8 +801,10 @@ export default function App() {
           <Dashboard
             eventInfo={eventInfo}
             roster={roster}
-            checkIns={checkIns}
+            checkIns={activeCheckIns}
             attendees={combinedAttendees}
+            staffRole={staffRole ?? 'helper'}
+            onUpdateVerifyTimeout={handleUpdateVerifyTimeout}
             onUpdateEventInfo={handleUpdateEventInfo}
             onUpdateSubmitWindow={handleUpdateSubmitWindow}
             onImportRoster={handleImportRoster}
@@ -763,6 +844,8 @@ export default function App() {
                 ? '學員簽退端 (參加時間主動計算)'
                 : activeMode === 'vip'
                 ? '貴賓報到情形'
+                : activeMode === 'lookup'
+                ? '報到資訊查詢'
                 : '承辦人比對後台 (已解鎖)'}
             </span>
             <span>·</span>

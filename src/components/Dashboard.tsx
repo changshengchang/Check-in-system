@@ -42,7 +42,8 @@ import {
   X,
   CheckSquare,
   Square,
-  Star
+  Star,
+  ShieldCheck
 } from 'lucide-react';
 
 import { SubmitWindowPanel } from './SubmitWindowPanel';
@@ -69,6 +70,9 @@ interface DashboardProps {
   onResetAllCheckIns: () => void;
   onToggleHrVerify: (attendeeId: string, type: 'checkin' | 'checkout') => void;
   onToggleVip?: (attendeeId: string) => void;
+  /** organizer = 承辦人 (完整權限)；helper = 協助人員 (只能查詢與簽到/簽退覆核) */
+  staffRole?: 'organizer' | 'helper';
+  onUpdateVerifyTimeout?: (minutes: number) => void;
   onNavigateToCheckIn: () => void;
   onNavigateToCheckOut: () => void;
   onLogout?: () => void;
@@ -91,6 +95,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onResetAllCheckIns,
   onToggleHrVerify,
   onToggleVip,
+  staffRole = 'organizer',
+  onUpdateVerifyTimeout,
   onNavigateToCheckIn,
   onNavigateToCheckOut,
   onLogout
@@ -130,6 +136,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const totalCheckedIn = checkedInList.length + walkInList.length;
   const checkedOutList = attendees.filter(a => a.checkOutTime);
   const vipList = attendees.filter(a => a.isVip);
+  const canManage = staffRole === 'organizer';
   const checkInVerifiedList = attendees.filter(a => a.checkInHrVerified || a.hrVerified);
   const checkOutVerifiedList = attendees.filter(a => a.checkOutHrVerified);
 
@@ -227,6 +234,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
         {/* Global Download & Export Action Group */}
         <div className="flex flex-wrap items-center gap-2">
+          {canManage && (
+            <>
           <button
             type="button"
             onClick={() => {
@@ -270,6 +279,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <span>列印簽章名冊 / PDF</span>
           </button>
 
+            </>
+          )}
+
           <button
             type="button"
             onClick={onNavigateToCheckIn}
@@ -301,6 +313,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
           )}
         </div>
       </div>
+
+      {!canManage && (
+        <div className="p-3.5 rounded-2xl bg-sky-50 border border-sky-200 text-sky-900 text-xs flex items-start gap-2" data-testid="helper-banner">
+          <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5 text-sky-600" />
+          <div>
+            <div className="font-bold text-sm">協助人員模式</div>
+            可查詢名單與進行「簽到覆核」「簽退覆核」；代為報到、取消報到、名冊與設定修改、匯出列印需由承辦人操作。
+          </div>
+        </div>
+      )}
 
       {/* KPI Stats Cards Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -396,8 +418,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
       </div>
 
       {/* 簽到／簽退開放時段設定 */}
-      {onUpdateSubmitWindow && (
-        <SubmitWindowPanel eventInfo={eventInfo} onUpdateSubmitWindow={onUpdateSubmitWindow} />
+      {canManage && onUpdateSubmitWindow && (
+        <SubmitWindowPanel eventInfo={eventInfo} onUpdateSubmitWindow={onUpdateSubmitWindow} onUpdateVerifyTimeout={onUpdateVerifyTimeout} />
       )}
 
       {/* Main Tabbed Area */}
@@ -533,6 +555,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </span>
             </button>
 
+            {canManage && (
             <button
               type="button"
               onClick={() => setActiveTab('roster_upload')}
@@ -545,8 +568,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
               <span>上傳與管理名冊 (Excel/CSV)</span>
             </button>
+            )}
           </div>
 
+          {canManage && (
           <div className="pb-3 flex items-center gap-2">
             <button
               type="button"
@@ -557,10 +582,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <span>手動新增單筆學員</span>
             </button>
           </div>
+          )}
         </div>
 
         {/* Tab 1: Roster Upload Tab */}
-        {activeTab === 'roster_upload' ? (
+        {activeTab === 'roster_upload' && canManage ? (
           <div className="p-6 space-y-6">
             <FileUploader onImport={onImportRoster} currentCount={roster.length} />
 
@@ -783,14 +809,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             <td className="py-3 px-2 text-center">
                               <button
                                 type="button"
-                                onClick={() => onToggleVip?.(attendee.id)}
-                                disabled={!onToggleVip}
+                                onClick={() => canManage && onToggleVip?.(attendee.id)}
+                                disabled={!onToggleVip || !canManage}
                                 role="checkbox"
                                 aria-checked={Boolean(attendee.isVip)}
                                 aria-label={`${attendee.name} 貴賓標記`}
                                 data-testid="vip-toggle"
                                 title={attendee.isVip ? '已標記為重要貴賓，點擊取消' : '點擊標記為重要貴賓'}
-                                className={`inline-flex items-center justify-center w-8 h-8 rounded-lg border transition-colors cursor-pointer ${
+                                className={`inline-flex items-center justify-center w-8 h-8 rounded-lg border transition-colors ${canManage ? 'cursor-pointer' : 'cursor-default'} ${
                                   attendee.isVip
                                     ? 'bg-orange-50 border-orange-300 text-orange-500 hover:bg-orange-100'
                                     : 'bg-white border-slate-200 text-slate-300 hover:text-orange-400 hover:border-orange-200'
@@ -991,6 +1017,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
                             {/* Check-In HR Verification (簽到覆核) */}
                             <td className="py-3 px-3 text-center">
+                              {isChecked && !(attendee.checkInHrVerified || attendee.hrVerified) && attendee.verifyDeadlineMs !== undefined && (
+                                <div className="text-[10px] text-rose-600 font-semibold mb-1" data-testid="verify-deadline">
+                                  需於 {new Date(attendee.verifyDeadlineMs).toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei', hour: '2-digit', minute: '2-digit' })} 前覆核
+                                </div>
+                              )}
                               {isChecked ? (
                                 attendee.checkInHrVerified || attendee.hrVerified ? (
                                   <button
@@ -1013,6 +1044,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                     <span>未覆核</span>
                                   </button>
                                 )
+                              ) : !canManage ? (
+                                <span className="text-[11px] text-slate-400">未報到</span>
                               ) : (
                                 <button
                                   type="button"
@@ -1058,7 +1091,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
                             {/* Actions */}
                             <td className="py-3 px-3 text-center">
-                              {isChecked ? (
+                              {!canManage ? (
+                                <span className="text-slate-300 text-[11px]">—</span>
+                              ) : isChecked ? (
                                 <div className="flex items-center justify-center gap-1.5 flex-wrap">
                                   {!attendee.checkOutTime ? (
                                     <button
@@ -1122,6 +1157,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 顯示 {filteredAttendees.length} 筆（名冊應到 {totalRosterCount} 人 · 實到 {totalCheckedIn} 人 · 缺席 {notCheckedInList.length} 人）
               </div>
               <div className="flex items-center gap-3">
+                {canManage && (
                 <button
                   type="button"
                   onClick={() => setConfirmResetModalOpen(true)}
@@ -1131,6 +1167,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>清空所有簽到紀錄</span>
                 </button>
+                )}
               </div>
             </div>
           </div>

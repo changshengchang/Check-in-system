@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Clock, Lock, Unlock, PlayCircle, StopCircle, Save, AlertCircle } from 'lucide-react';
+import { Clock, Lock, Unlock, PlayCircle, StopCircle, Save, AlertCircle, Timer } from 'lucide-react';
+import { verifyTimeoutMinutes, DEFAULT_VERIFY_TIMEOUT_MIN, MAX_VERIFY_TIMEOUT_MIN } from '../utils/verify';
 import { EventInfo, SubmitWindow } from '../types';
 import {
   useSubmitWindow,
@@ -15,10 +16,11 @@ type Kind = 'checkin' | 'checkout';
 interface SubmitWindowPanelProps {
   eventInfo: EventInfo;
   onUpdateSubmitWindow: (kind: Kind, window: SubmitWindow) => void;
+  onUpdateVerifyTimeout?: (minutes: number) => void;
 }
 
 /** 承辦人後台：簽到 / 簽退開放時段設定 */
-export const SubmitWindowPanel: React.FC<SubmitWindowPanelProps> = ({ eventInfo, onUpdateSubmitWindow }) => (
+export const SubmitWindowPanel: React.FC<SubmitWindowPanelProps> = ({ eventInfo, onUpdateSubmitWindow, onUpdateVerifyTimeout }) => (
   <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 sm:p-5" data-testid="submit-window-panel">
     <div className="flex items-start gap-2 mb-3">
       <Clock className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
@@ -33,8 +35,75 @@ export const SubmitWindowPanel: React.FC<SubmitWindowPanelProps> = ({ eventInfo,
       <WindowEditor kind="checkin" window={eventInfo.checkInWindow} onSave={w => onUpdateSubmitWindow('checkin', w)} />
       <WindowEditor kind="checkout" window={eventInfo.checkOutWindow} onSave={w => onUpdateSubmitWindow('checkout', w)} />
     </div>
+    {onUpdateVerifyTimeout && <VerifyTimeoutEditor minutes={verifyTimeoutMinutes(eventInfo)} onSave={onUpdateVerifyTimeout} />}
   </div>
 );
+
+/** 簽到覆核期限：學員自行簽到後須在幾分鐘內完成簽到覆核，逾時作廢 */
+const VerifyTimeoutEditor: React.FC<{ minutes: number; onSave: (m: number) => void }> = ({ minutes, onSave }) => {
+  const enabled = minutes > 0;
+  const [draft, setDraft] = useState(String(enabled ? minutes : DEFAULT_VERIFY_TIMEOUT_MIN));
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    if (!dirty) setDraft(String(enabled ? minutes : DEFAULT_VERIFY_TIMEOUT_MIN));
+  }, [minutes, enabled, dirty]);
+  const n = Number(draft);
+  const valid = Number.isInteger(n) && n >= 1 && n <= MAX_VERIFY_TIMEOUT_MIN;
+
+  return (
+    <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3.5 space-y-2" data-testid="verify-timeout-editor">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Timer className="w-4 h-4 text-rose-600" />
+          <span className="text-sm font-bold text-slate-800">簽到覆核期限</span>
+          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${enabled ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`} data-testid="verify-timeout-status">
+            {enabled ? `${minutes} 分鐘內未覆核即作廢` : '不作廢'}
+          </span>
+        </div>
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <span className="text-xs text-slate-600">逾時作廢</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={enabled}
+            data-testid="verify-timeout-toggle"
+            onClick={() => { setDirty(false); onSave(enabled ? 0 : (valid ? n : DEFAULT_VERIFY_TIMEOUT_MIN)); }}
+            className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer ${enabled ? 'bg-rose-600' : 'bg-slate-300'}`}
+          >
+            <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-5' : ''}`} />
+          </button>
+        </label>
+      </div>
+      {enabled && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <input
+            type="number"
+            min={1}
+            max={MAX_VERIFY_TIMEOUT_MIN}
+            value={draft}
+            onChange={e => { setDraft(e.target.value); setDirty(true); }}
+            data-testid="verify-timeout-input"
+            className="w-24 px-2.5 py-1.5 rounded-lg border border-slate-300 text-sm bg-white focus:outline-hidden focus:ring-2 focus:ring-rose-500"
+          />
+          <span className="text-xs text-slate-600">分鐘</span>
+          <button
+            type="button"
+            disabled={!dirty || !valid}
+            onClick={() => { setDirty(false); onSave(n); }}
+            data-testid="verify-timeout-save"
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed cursor-pointer"
+          >
+            <Save className="w-3.5 h-3.5" /> 儲存
+          </button>
+          {!valid && <span className="text-xs text-rose-700">請輸入 1～{MAX_VERIFY_TIMEOUT_MIN} 的整數</span>}
+        </div>
+      )}
+      <p className="text-[11px] text-slate-500">
+        學員自行簽到後，須在期限內由人事單位完成「簽到覆核」，逾時自動作廢需重新簽到。承辦人協助報到不受影響；修改只套用到之後送出的簽到。
+      </p>
+    </div>
+  );
+};
 
 interface WindowEditorProps {
   kind: Kind;

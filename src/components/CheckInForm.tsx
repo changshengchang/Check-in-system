@@ -1,10 +1,13 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import confetti from 'canvas-confetti';
 import { CheckInRecord, EventInfo, RegisteredParticipant } from '../types';
 import { SignaturePad, SignaturePadHandle } from './SignaturePad';
 import { SubmitWindowNotice, getWindowBlockedMessage } from './SubmitWindowNotice';
 import { useSubmitWindow, getWindowStatus, serverNow } from '../utils/submitWindow';
 import { rosterSerialOf, parseSerial } from '../utils/serial';
+import { verifyDeadlineFor, verifyTimeoutMinutes, successState, isCheckInVerified } from '../utils/verify';
+import { forgetMyCheckIn } from '../utils/myCheckIns';
+import { VerifyTopBanner, VerifyBottomStatus } from './CheckInVerifyStatus';
 import {
   UserCheck,
   CheckCircle2,
@@ -27,6 +30,9 @@ interface CheckInFormProps {
   existingCheckIns: CheckInRecord[];
   /** 回傳 Promise：null = 雲端已接受；字串 = 被拒絕的原因 */
   onCheckInSuccess: (record: CheckInRecord) => Promise<string | null> | void;
+  /** 報到成功頁倒數結束 (逾時未覆核) 時通知，刪除作廢的紀錄 */
+  onExpireCheckIn?: (checkInId: string) => void;
+  onNavigateToLookup?: () => void;
   onNavigateToDashboard: () => void;
 }
 
@@ -35,6 +41,8 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
   roster,
   existingCheckIns,
   onCheckInSuccess,
+  onExpireCheckIn,
+  onNavigateToLookup,
   onNavigateToDashboard
 }) => {
   const [name, setName] = useState('');
@@ -59,6 +67,48 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
 
   // 簽到開放時段 (承辦人於後台設定，時段外不可送出)
   const windowStatus = useSubmitWindow(eventInfo.checkInWindow);
+
+  // 報到成功頁：即時追蹤這筆紀錄的覆核狀態與倒數
+  const liveRecord = recentCheckedIn ? existingCheckIns.find(c => c.id === recentCheckedIn.id) : undefined;
+  const seenLiveRef = useRef<string | null>(null);
+  if (recentCheckedIn && liveRecord) seenLiveRef.current = recentCheckedIn.id;
+  const [nowTick, setNowTick] = useState(() => serverNow());
+  const verifyState = recentCheckedIn
+    ? successState(recentCheckedIn, liveRecord, nowTick, seenLiveRef.current === recentCheckedIn.id)
+    : 'no-deadline';
+  useEffect(() => {
+    if (!recentCheckedIn || verifyState !== 'pending') return;
+    setNowTick(serverNow());
+    const timer = setInterval(() => setNowTick(serverNow()), 1000);
+    return () => clearInterval(timer);
+  }, [recentCheckedIn?.id, verifyState]);
+  // 倒數結束：通知刪除作廢的紀錄 (只通知一次)
+  const expiredNotifiedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (recentCheckedIn && verifyState === 'expired' && expiredNotifiedRef.current !== recentCheckedIn.id) {
+      expiredNotifiedRef.current = recentCheckedIn.id;
+      onExpireCheckIn?.(recentCheckedIn.id);
+      forgetMyCheckIn(recentCheckedIn.id);
+    }
+  }, [recentCheckedIn?.id, verifyState]);
+  const remainingMs = recentCheckedIn?.verifyDeadlineMs !== undefined ? recentCheckedIn.verifyDeadlineMs - nowTick : undefined;
+
+  // 逾時或被取消後重新簽到：帶入原本的姓名、職稱、部門，只需重新簽名
+  const handleRetryCheckIn = () => {
+    if (!recentCheckedIn) return;
+    const prev = recentCheckedIn;
+    const rosterPerson = roster.find(p =>
+      (prev.participantId && p.id === prev.participantId) || p.name.trim().toLowerCase() === prev.name.trim().toLowerCase()
+    );
+    setRecentCheckedIn(null);
+    setName(prev.name);
+    setTitle(prev.title || '');
+    setDepartment(prev.department || '');
+    setMatchedParticipant(rosterPerson || null);
+    setIsWalkIn(!rosterPerson);
+    setErrorMessage('請重新簽名後送出');
+    signaturePadRef.current?.clear();
+  };
 
   // Already checked in IDs/names
   const checkedInIds = new Set(existingCheckIns.map(c => c.participantId).filter(Boolean));
@@ -172,6 +222,8 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
       email: matchedParticipant?.email,
       customFields: matchedParticipant?.customFields,
       checkInTime: now.toISOString(),
+      // 須在期限內完成簽到覆核，否則作廢 (以伺服器時間計算)
+      verifyDeadlineMs: verifyDeadlineFor(eventInfo, serverNow()),
       signatureDataUrl,
       isWalkIn: !matchedParticipant,
       notes: notes.trim() || undefined
@@ -199,6 +251,7 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
   };
 
   const handleResetForNext = () => {
+    if (recentCheckedIn && verifyState === 'verified') forgetMyCheckIn(recentCheckedIn.id);
     setName('');
     setTitle('');
     setDepartment('');
@@ -483,7 +536,8 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
       {/* Success Modal Confirmation Dialog */}
       {recentCheckedIn && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden text-center p-6 sm:p-8">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full max-h-[94vh] overflow-y-auto text-center p-6 sm:p-8" data-testid="checkin-success">
+            <VerifyTopBanner state={verifyState} timeoutMinutes={verifyTimeoutMinutes(eventInfo)} />
             <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4 ring-8 ring-emerald-50">
               <CheckCircle2 className="w-10 h-10" />
             </div>
@@ -491,9 +545,11 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
             <h3 className="text-2xl font-black text-slate-900 tracking-tight">
               報到手續完成！
             </h3>
-            <p className="text-sm font-bold text-red-600 mt-1.5 tracking-wide">
-              歡迎參加本次訓練與活動,請記得向人事單位告知【簽到覆核】
-            </p>
+            {verifyState !== 'verified' && (
+              <p className="text-sm font-bold text-red-600 mt-1.5 tracking-wide">
+                歡迎參加本次訓練與活動,請記得向人事單位告知【簽到覆核】
+              </p>
+            )}
 
             {/* Check-in Details Card */}
             <div className="mt-5 p-4 rounded-2xl bg-slate-50 border border-slate-200 text-left space-y-2 text-xs">
@@ -535,11 +591,11 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
               <div className="flex justify-between items-center py-1 border-b border-slate-200">
                 <span className="text-slate-500">簽到覆核狀態</span>
                 <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-                  recentCheckedIn.checkInHrVerified || recentCheckedIn.hrVerified
+                  isCheckInVerified(liveRecord ?? recentCheckedIn)
                     ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                     : 'bg-amber-100 text-amber-800 border border-amber-300'
-                }`}>
-                  {recentCheckedIn.checkInHrVerified || recentCheckedIn.hrVerified ? '✓ 簽到已覆核' : '⏳ 簽到未覆核 (請洽人事)'}
+                }`} data-testid="success-verify-badge">
+                  {isCheckInVerified(liveRecord ?? recentCheckedIn) ? '✓ 簽到已覆核' : '⏳ 簽到未覆核 (請洽人事)'}
                 </span>
               </div>
               <div className="flex justify-between items-center py-1 border-b border-slate-200">
@@ -604,17 +660,32 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
               )}
             </div>
 
+            {/* 覆核倒數 / 覆核成功 / 逾時失效 */}
+            <VerifyBottomStatus state={verifyState} remainingMs={remainingMs} onRetry={handleRetryCheckIn} />
+
             {/* Action Buttons */}
-            <div className="mt-6 flex flex-col sm:flex-row gap-2">
-              <button
-                type="button"
-                onClick={handleResetForNext}
-                className="flex-1 py-3 px-4 rounded-xl font-bold text-sm bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <span>下一位學員報到</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
+            {verifyState !== 'expired' && verifyState !== 'cancelled' && (
+              <div className="mt-6 flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={handleResetForNext}
+                  data-testid="checkin-done"
+                  className="w-full py-3 px-4 rounded-xl font-bold text-sm bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <span>報到完成</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+                {verifyState === 'pending' && (
+                  <p className="text-[11px] text-slate-500">
+                    關閉後可在
+                    {onNavigateToLookup ? (
+                      <button type="button" onClick={onNavigateToLookup} className="mx-0.5 text-teal-700 font-bold underline cursor-pointer">「報到資訊查詢」</button>
+                    ) : '「報到資訊查詢」'}
+                    查看覆核狀態與剩餘時間
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

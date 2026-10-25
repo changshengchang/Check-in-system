@@ -1,13 +1,14 @@
 import React from 'react';
 import { EventInfo, SyncStatus } from '../types';
-import { Calendar, MapPin, UserCheck, LayoutDashboard, Clock, Sparkles, Lock, Unlock, LogOut, Star } from 'lucide-react';
+import { Calendar, MapPin, UserCheck, LayoutDashboard, Clock, Sparkles, Lock, Unlock, LogOut, Star, Search } from 'lucide-react';
 
 interface EventHeaderProps {
   eventInfo: EventInfo;
   onUpdateEventInfo: (updated: EventInfo) => void;
-  activeMode: 'checkin' | 'checkout' | 'vip' | 'dashboard';
-  onRequestSwitchMode: (mode: 'checkin' | 'checkout' | 'vip' | 'dashboard') => void;
+  activeMode: 'checkin' | 'checkout' | 'lookup' | 'vip' | 'dashboard';
+  onRequestSwitchMode: (mode: 'checkin' | 'checkout' | 'lookup' | 'vip' | 'dashboard') => void;
   isOrganizerAuthenticated: boolean;
+  staffRole?: 'organizer' | 'helper' | null;
   onOrganizerLogout: () => void;
   checkedInCount: number;
   totalExpectedCount: number;
@@ -62,6 +63,7 @@ export const EventHeader: React.FC<EventHeaderProps> = ({
   activeMode,
   onRequestSwitchMode,
   isOrganizerAuthenticated,
+  staffRole,
   onOrganizerLogout,
   checkedInCount,
   totalExpectedCount,
@@ -176,6 +178,19 @@ export const EventHeader: React.FC<EventHeaderProps> = ({
 
                 <button
                   type="button"
+                  onClick={() => onRequestSwitchMode('lookup')}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    activeMode === 'lookup'
+                      ? 'bg-teal-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                  }`}
+                >
+                  <Search className="w-4 h-4" />
+                  <span>報到資訊查詢</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => onRequestSwitchMode('vip')}
                   className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                     activeMode === 'vip'
@@ -207,7 +222,7 @@ export const EventHeader: React.FC<EventHeaderProps> = ({
                   ) : (
                     <span className="bg-emerald-500/20 text-emerald-200 text-[10px] px-1.5 py-0.2 rounded flex items-center gap-0.5">
                       <Unlock className="w-2.5 h-2.5 text-emerald-300" />
-                      <span>已驗證</span>
+                      <span>{staffRole === 'helper' ? '協助人員' : '承辦人'}</span>
                     </span>
                   )}
                 </button>
