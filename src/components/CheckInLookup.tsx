@@ -124,6 +124,7 @@ const ResultCard: React.FC<{ a: CombinedAttendeeView; fields: string[]; now: num
     { label: '您的序號', value: a.serialNo !== undefined ? String(a.serialNo) : '配發中', big: true },
     { label: '職稱', value: a.title || '—' },
     { label: '報到時間', value: twTime(a.checkInTime) },
+    ...(a.checkOutTime ? [{ label: '簽退時間', value: twTime(a.checkOutTime) }] : []),
     ...fields.map(f => ({ label: f, value: fieldValue(a, f) ?? '—' }))
   ];
   return (
@@ -136,14 +137,27 @@ const ResultCard: React.FC<{ a: CombinedAttendeeView; fields: string[]; now: num
         </div>
         {verified ? (
           <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold" data-testid="lookup-verified">
-            <CheckCircle2 className="w-3.5 h-3.5" /> 已覆核
+            <CheckCircle2 className="w-3.5 h-3.5" /> 簽到已覆核
           </span>
         ) : (
           <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-bold" data-testid="lookup-pending">
-            <Timer className="w-3.5 h-3.5" /> 未覆核{remaining !== undefined ? `（剩 ${formatCountdown(remaining)}）` : ''}
+            <Timer className="w-3.5 h-3.5" /> 簽到未覆核{remaining !== undefined ? `（剩 ${formatCountdown(remaining)}）` : ''}
           </span>
         )}
       </div>
+      {a.checkOutTime && (
+        <div className="mt-1.5 flex justify-end">
+          {a.checkOutHrVerified ? (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold" data-testid="lookup-checkout-verified">
+              <CheckCircle2 className="w-3.5 h-3.5" /> 已簽退 · 簽退已覆核
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-bold" data-testid="lookup-checkout-pending">
+              <Timer className="w-3.5 h-3.5" /> 已簽退 · 簽退未覆核
+            </span>
+          )}
+        </div>
+      )}
       <dl className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2">
         {boxes.map(b => (
           <div key={b.label} className="bg-slate-50 rounded-xl px-3 py-2 min-w-0">

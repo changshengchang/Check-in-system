@@ -101,3 +101,39 @@ export const VerifyBottomStatus: React.FC<{
       return null;
   }
 };
+
+/** 簽退成功頁：等待簽退覆核 / 簽退覆核完成 (即時更新，無期限) */
+export const CheckoutVerifyStatus: React.FC<{ verified: boolean; position: 'top' | 'bottom' }> = ({ verified, position }) => {
+  if (position === 'top') {
+    return verified ? (
+      <div className="mb-4 p-3 rounded-2xl bg-emerald-600 text-white text-left shadow-md" data-testid="checkout-top-banner">
+        <div className="flex items-center gap-2 font-black text-base">
+          <CheckCircle2 className="w-5 h-5 shrink-0" />
+          簽退覆核完成，可以關閉此頁面了
+        </div>
+      </div>
+    ) : (
+      <div className="mb-4 p-3 rounded-2xl bg-rose-600 text-white text-left shadow-md" data-testid="checkout-top-banner">
+        <div className="flex items-center gap-2 font-black text-base">
+          <AlertTriangle className="w-5 h-5 shrink-0" />
+          請勿關閉此頁面
+        </div>
+        <p className="text-xs mt-1 text-rose-50 leading-relaxed">請向人事單位出示此畫面，完成【簽退覆核】後即可關閉。</p>
+      </div>
+    );
+  }
+  return verified ? (
+    <div className="mt-4 p-4 rounded-2xl bg-emerald-50 border-2 border-emerald-300 text-emerald-800 text-center" data-testid="checkout-bottom-status">
+      <CheckCircle2 className="w-8 h-8 mx-auto" />
+      <div className="text-base font-black mt-1">✓ 簽退覆核成功</div>
+      <p className="text-xs mt-0.5">可以關閉此頁面了，辛苦了！</p>
+    </div>
+  ) : (
+    <div className="mt-4 p-4 rounded-2xl bg-amber-50 border-2 border-amber-300 text-amber-900 text-center" data-testid="checkout-bottom-status">
+      <div className="flex items-center justify-center gap-2 text-sm font-bold">
+        <Timer className="w-4 h-4" /> 等待人事單位簽退覆核
+      </div>
+      <p className="text-xs mt-1">人事單位覆核後，此畫面會自動更新</p>
+    </div>
+  );
+};

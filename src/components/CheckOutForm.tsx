@@ -3,6 +3,7 @@ import confetti from 'canvas-confetti';
 import { CheckInRecord, EventInfo, CombinedAttendeeView } from '../types';
 import { SignaturePad, SignaturePadHandle } from './SignaturePad';
 import { SubmitWindowNotice, getWindowBlockedMessage } from './SubmitWindowNotice';
+import { CheckoutVerifyStatus } from './CheckInVerifyStatus';
 import { useSubmitWindow, getWindowStatus, serverNow } from '../utils/submitWindow';
 import {
   calculateParticipationDuration,
@@ -85,6 +86,7 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
 
   // Success dialog state
   const [recentCheckedOut, setRecentCheckedOut] = useState<{
+    checkInId: string;
     name: string;
     title: string;
     department?: string;
@@ -267,6 +269,7 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
     });
 
     setRecentCheckedOut({
+      checkInId: targetCheckInId,
       name: selectedAttendee.name,
       title: selectedAttendee.title,
       department: selectedAttendee.department,
@@ -283,6 +286,10 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
 
     setIsSubmitting(false);
   };
+
+  // 簽退成功頁：即時追蹤簽退覆核狀態 (人事在後台覆核後立即更新)
+  const liveCheckOutRecord = recentCheckedOut ? existingCheckIns.find(c => c.id === recentCheckedOut.checkInId) : undefined;
+  const checkOutVerified = Boolean(liveCheckOutRecord ? liveCheckOutRecord.checkOutHrVerified : recentCheckedOut?.checkOutHrVerified);
 
   const handleResetForNext = () => {
     setName('');
@@ -670,7 +677,8 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
       {/* Check-Out Success Modal Confirmation Dialog */}
       {recentCheckedOut && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden text-center p-6 sm:p-8">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full max-h-[94vh] overflow-y-auto text-center p-6 sm:p-8" data-testid="checkout-success">
+            <CheckoutVerifyStatus verified={checkOutVerified} position="top" />
             <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-4 ring-8 ring-amber-50">
               <CheckCircle2 className="w-10 h-10" />
             </div>
@@ -678,10 +686,11 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
             <h3 className="text-2xl font-black text-slate-900 tracking-tight">
               簽退手續完成！
             </h3>
-            {/* Requirement 1: Red notice matching check-in */}
-            <p className="text-sm font-bold text-red-600 mt-1.5 tracking-wide">
-              恭喜完成本次活動簽退！請記得向人事單位告知【簽退覆核】
-            </p>
+            {!checkOutVerified && (
+              <p className="text-sm font-bold text-red-600 mt-1.5 tracking-wide">
+                恭喜完成本次活動簽退！請記得向人事單位告知【簽退覆核】
+              </p>
+            )}
 
             {/* Check-out Details Card */}
             <div className="mt-5 p-4 rounded-2xl bg-amber-50/60 border border-amber-200 text-left space-y-2.5 text-xs">
@@ -744,9 +753,9 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
               <div className="flex justify-between items-center py-1 border-b border-amber-200/80">
                 <span className="text-slate-500">簽退覆核狀態</span>
                 <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-                  recentCheckedOut.checkOutHrVerified ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-amber-100 text-amber-800 border border-amber-300'
-                }`}>
-                  {recentCheckedOut.checkOutHrVerified ? '✓ 簽退已覆核' : '⏳ 簽退未覆核 (請向人事單位出示告知)'}
+                  checkOutVerified ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-amber-100 text-amber-800 border border-amber-300'
+                }`} data-testid="checkout-verify-badge">
+                  {checkOutVerified ? '✓ 簽退已覆核' : '⏳ 簽退未覆核 (請向人事單位出示告知)'}
                 </span>
               </div>
 
@@ -765,14 +774,18 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
               )}
             </div>
 
+            {/* 等待簽退覆核 / 簽退覆核成功 (即時更新) */}
+            <CheckoutVerifyStatus verified={checkOutVerified} position="bottom" />
+
             {/* Action Buttons */}
             <div className="mt-6 flex flex-col sm:flex-row gap-2">
               <button
                 type="button"
                 onClick={handleResetForNext}
+                data-testid="checkout-done"
                 className="flex-1 py-3 px-4 rounded-xl font-bold text-sm bg-amber-600 hover:bg-amber-700 text-white shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
               >
-                <span>下一位學員簽退</span>
+                <span>簽退完成</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
               <button
