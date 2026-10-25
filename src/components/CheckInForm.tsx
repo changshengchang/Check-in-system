@@ -7,6 +7,7 @@ import { useSubmitWindow, getWindowStatus, serverNow } from '../utils/submitWind
 import { rosterSerialOf, parseSerial } from '../utils/serial';
 import { verifyDeadlineFor, verifyTimeoutMinutes, successState, isCheckInVerified } from '../utils/verify';
 import { forgetMyCheckIn } from '../utils/myCheckIns';
+import { completionFieldRows } from '../utils/lookup';
 import { VerifyTopBanner, VerifyBottomStatus } from './CheckInVerifyStatus';
 import {
   UserCheck,
@@ -607,43 +608,13 @@ export const CheckInForm: React.FC<CheckInFormProps> = ({
                 </span>
               </div>
 
-              {/* Extra Roster Fields Selected by Organizer (User Request 1) */}
-              {(() => {
-                const selectedFields = eventInfo.completionDisplayFields || ['職稱', '部門', '電話'];
-                const extraList: { label: string; value: string }[] = [];
-
-                selectedFields.forEach(field => {
-                  const norm = field.trim().toLowerCase();
-                  if (norm === '姓名' || norm === 'name') return;
-                  if (norm === '職稱' || norm === '部門') return; // already rendered in top rows
-                  if (norm === '編號' || norm === '序號') return; // 已顯示在「您的序號」
-
-                  let val: string | undefined;
-                  if (recentCheckedIn.customFields && recentCheckedIn.customFields[field]) {
-                    val = recentCheckedIn.customFields[field];
-                  } else if (norm.includes('電話') || norm.includes('phone') || norm.includes('手機')) {
-                    val = recentCheckedIn.phone || recentCheckedIn.customFields?.['電話'] || recentCheckedIn.customFields?.['聯絡電話'];
-                  } else if (norm.includes('信箱') || norm.includes('email') || norm.includes('郵件')) {
-                    val = recentCheckedIn.email || recentCheckedIn.customFields?.['信箱'] || recentCheckedIn.customFields?.['電子信箱'];
-                  } else if (norm.includes('備註') || norm.includes('note')) {
-                    val = recentCheckedIn.notes || recentCheckedIn.customFields?.['備註'];
-                  } else if (recentCheckedIn.customFields) {
-                    const matchingKey = Object.keys(recentCheckedIn.customFields).find(k => k.trim().toLowerCase() === norm);
-                    if (matchingKey) val = recentCheckedIn.customFields[matchingKey];
-                  }
-
-                  if (val && val.trim() !== '') {
-                    extraList.push({ label: field, value: val.trim() });
-                  }
-                });
-
-                return extraList.map(({ label, value }) => (
-                  <div key={label} className="flex justify-between items-center py-1 border-b border-slate-200">
-                    <span className="text-slate-500 font-medium">{label}</span>
-                    <span className="font-semibold text-slate-800 text-right">{value}</span>
-                  </div>
-                ));
-              })()}
+              {/* 名冊欄位 (承辦人勾選，例如桌次、葷素、車次) */}
+              {completionFieldRows(eventInfo, recentCheckedIn).map(({ label, value }) => (
+                <div key={label} className="flex justify-between items-center py-1 border-b border-slate-200" data-testid="success-field">
+                  <span className="text-slate-500 font-medium">{label}</span>
+                  <span className="font-semibold text-slate-800 text-right">{value}</span>
+                </div>
+              ))}
 
               {/* Signature snapshot thumbnail */}
               {recentCheckedIn.signatureDataUrl && (

@@ -4,6 +4,7 @@ import { CheckInRecord, EventInfo, CombinedAttendeeView } from '../types';
 import { SignaturePad, SignaturePadHandle } from './SignaturePad';
 import { SubmitWindowNotice, getWindowBlockedMessage } from './SubmitWindowNotice';
 import { CheckoutVerifyStatus } from './CheckInVerifyStatus';
+import { completionFieldRows } from '../utils/lookup';
 import { useSubmitWindow, getWindowStatus, serverNow } from '../utils/submitWindow';
 import {
   calculateParticipationDuration,
@@ -99,6 +100,10 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
     compTimeDisplay: string;
     signatureDataUrl: string;
     checkOutHrVerified?: boolean;
+    customFields?: Record<string, string>;
+    phone?: string;
+    email?: string;
+    notes?: string;
   } | null>(null);
 
   const signaturePadRef = useRef<SignaturePadHandle | null>(null);
@@ -281,7 +286,11 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
       deductionReason,
       compTimeDisplay: compResult.compDisplay,
       signatureDataUrl,
-      checkOutHrVerified: selectedAttendee.checkOutHrVerified
+      checkOutHrVerified: selectedAttendee.checkOutHrVerified,
+      customFields: selectedAttendee.customFields,
+      phone: selectedAttendee.phone,
+      email: selectedAttendee.email,
+      notes: selectedAttendee.notes
     });
 
     setIsSubmitting(false);
@@ -758,6 +767,14 @@ export const CheckOutForm: React.FC<CheckOutFormProps> = ({
                   {checkOutVerified ? '✓ 簽退已覆核' : '⏳ 簽退未覆核 (請向人事單位出示告知)'}
                 </span>
               </div>
+
+              {/* 名冊欄位 (承辦人勾選，例如桌次、葷素、車次) */}
+              {completionFieldRows(eventInfo, recentCheckedOut).map(({ label, value }) => (
+                <div key={label} className="flex justify-between items-center py-1 border-b border-amber-200/80" data-testid="checkout-field">
+                  <span className="text-slate-500 font-medium">{label}</span>
+                  <span className="font-semibold text-slate-800 text-right">{value}</span>
+                </div>
+              ))}
 
               {/* Signature snapshot thumbnail */}
               {recentCheckedOut.signatureDataUrl && (

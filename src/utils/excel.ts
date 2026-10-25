@@ -34,12 +34,26 @@ export function parseSpreadsheet(data: ArrayBuffer): {
     return { participants: [], rawRowsCount: 0, availableColumns: [], recognizedColumns: {} };
   }
 
-  // Extract all distinct column keys from headers
-  const availableColumns = Array.from(
-    new Set(
-      rawRows.flatMap(row => Object.keys(row).map(k => k.trim()).filter(Boolean))
-    )
-  );
+  // 欄位名稱去掉前後空白後使用，但讀值時要用 Excel 原本的標題 (例如「用餐習慣 」後面有空白)。
+  // 同名欄位 (只差在空白) 合併；忽略沒有標題的空白欄 (__EMPTY)。
+  const columnKeys = new Map<string, string[]>();
+  rawRows.forEach(row => {
+    Object.keys(row).forEach(rawKey => {
+      const col = rawKey.trim();
+      if (!col || /^__EMPTY/.test(col)) return;
+      const keys = columnKeys.get(col) || [];
+      if (!keys.includes(rawKey)) keys.push(rawKey);
+      columnKeys.set(col, keys);
+    });
+  });
+  const availableColumns = Array.from(columnKeys.keys());
+  const cellOf = (row: Record<string, any>, col: string) => {
+    for (const k of columnKeys.get(col) || []) {
+      const v = row[k];
+      if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
+    }
+    return undefined;
+  };
 
   // Find column mapping from first row
   const sampleRow = rawRows[0];
@@ -84,9 +98,8 @@ export function parseSpreadsheet(data: ArrayBuffer): {
     // Collect all dynamic custom fields from row
     const customFields: Record<string, string> = {};
     availableColumns.forEach(col => {
-      if (row[col] !== undefined && row[col] !== null && String(row[col]).trim() !== '') {
-        customFields[col] = String(row[col]).trim();
-      }
+      const v = cellOf(row, col);
+      if (v !== undefined) customFields[col] = v;
     });
 
     participants.push({

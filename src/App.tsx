@@ -381,10 +381,17 @@ export default function App() {
     runEventMutation(`匯入名冊 (${newParticipants.length}人)`, base => {
       // 序號取自 Excel「編號」欄位，缺漏或重複者從最大號往後補發
       const numbered = importRosterWithSerials(base.roster, base.lastSerialNo, newParticipants, mode, usedByWalkIns);
+      // 附加匯入：保留原本的欄位與顯示設定，再加上新檔案的欄位 (例如新增的葷素、車次)
+      const union = (prev: string[] | undefined, next: string[]) =>
+        Array.from(new Set([...(prev || []), ...next].map(c => c.trim()).filter(Boolean)));
       const nextEventInfo: EventInfo = {
         ...base.eventInfo,
-        ...(selectedColumns && selectedColumns.length > 0 ? { completionDisplayFields: selectedColumns } : {}),
-        ...(allColumns && allColumns.length > 0 ? { availableRosterColumns: allColumns } : {})
+        ...(selectedColumns && selectedColumns.length > 0
+          ? { completionDisplayFields: mode === 'append' ? union(base.eventInfo.completionDisplayFields, selectedColumns) : selectedColumns }
+          : {}),
+        ...(allColumns && allColumns.length > 0
+          ? { availableRosterColumns: mode === 'append' ? union(base.eventInfo.availableRosterColumns, allColumns) : allColumns }
+          : {})
       };
       return { eventInfo: nextEventInfo, roster: numbered.roster, lastSerialNo: numbered.lastSerialNo };
     });

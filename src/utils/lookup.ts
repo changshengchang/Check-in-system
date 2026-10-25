@@ -59,3 +59,36 @@ export function searchCheckedIn(attendees: CombinedAttendeeView[], query: string
   const serial = serialMatch ? parseSerial(serialMatch[1]) : undefined;
   return list.filter(a => a.name.toLowerCase().includes(q) || (serial !== undefined && a.serialNo === serial));
 }
+
+/**
+ * 報到 / 簽退成功頁要額外顯示的欄位 (承辦人在後台勾選；匯入名冊時預設勾選所有欄位)
+ * 姓名、職稱、部門、編號/序號已在畫面上方顯示，這裡略過。值為空白的欄位不顯示。
+ */
+export function completionFieldRows(
+  eventInfo: Pick<EventInfo, 'completionDisplayFields'>,
+  rec: { customFields?: Record<string, string>; phone?: string; email?: string; notes?: string }
+): { label: string; value: string }[] {
+  const selected = eventInfo.completionDisplayFields || ['職稱', '部門', '電話'];
+  const custom = rec.customFields || {};
+  const byTrimmed = (field: string) => {
+    const k = Object.keys(custom).find(key => key.trim().toLowerCase() === field.trim().toLowerCase());
+    return k ? custom[k] : undefined;
+  };
+  const rows: { label: string; value: string }[] = [];
+  const seen = new Set<string>();
+  selected.forEach(field => {
+    const label = field.trim();
+    const norm = label.toLowerCase();
+    if (!label || seen.has(norm)) return;
+    if (['姓名', 'name', '職稱', '部門', '編號', '序號'].includes(norm)) return;
+    let val = byTrimmed(label);
+    if (!val && (norm.includes('電話') || norm.includes('phone') || norm.includes('手機'))) val = rec.phone || byTrimmed('電話') || byTrimmed('聯絡電話');
+    else if (!val && (norm.includes('信箱') || norm.includes('email') || norm.includes('郵件'))) val = rec.email || byTrimmed('信箱') || byTrimmed('電子信箱');
+    else if (!val && (norm.includes('備註') || norm.includes('note'))) val = rec.notes || byTrimmed('備註');
+    if (val && String(val).trim()) {
+      seen.add(norm);
+      rows.push({ label, value: String(val).trim() });
+    }
+  });
+  return rows;
+}

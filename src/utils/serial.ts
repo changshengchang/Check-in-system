@@ -149,10 +149,18 @@ export function importRosterWithSerials(
     const result = assignRosterSerials(incoming, walkInMax, walkIns);
     return { roster: result.roster, lastSerialNo: Math.max(result.lastSerialNo, walkInMax) };
   }
-  const existingNames = new Set(currentRoster.map(p => p.name.trim().toLowerCase()));
-  const filteredNew = incoming.filter(p => !existingNames.has(p.name.trim().toLowerCase()));
+  // 已在名冊上的人 (同名)：更新資料 (例如新增的葷素、車次欄位)，序號與 ID 不變；新的人加在後面
+  const key = (p: RegisteredParticipant) => p.name.trim().toLowerCase();
+  const incomingByName = new Map<string, RegisteredParticipant>();
+  incoming.forEach(p => { if (!incomingByName.has(key(p))) incomingByName.set(key(p), p); });
+  const existingNames = new Set(currentRoster.map(key));
+  const updatedExisting = currentRoster.map(p => {
+    const inc = incomingByName.get(key(p));
+    return inc ? mergeParticipant(p, inc) : p;
+  });
+  const filteredNew = incoming.filter((p, i) => !existingNames.has(key(p)) && incoming.findIndex(x => key(x) === key(p)) === i);
   const start = Math.max(currentLastSerialNo ?? 0, maxRosterSerial(currentRoster), walkInMax);
-  const result = assignRosterSerials([...currentRoster, ...filteredNew], start, walkIns);
+  const result = assignRosterSerials([...updatedExisting, ...filteredNew], start, walkIns);
   return { roster: result.roster, lastSerialNo: Math.max(start, result.lastSerialNo) };
 }
 
@@ -166,4 +174,21 @@ export function addParticipantWithSerial(
   const exists = currentRoster.some(x => x.id === p.id || (x.name.trim() === p.name.trim() && x.title === p.title));
   if (exists) return { roster: currentRoster, lastSerialNo: last };
   return { roster: [...currentRoster, { ...p, serialNo: last + 1 }], lastSerialNo: last + 1 };
+}
+
+/**
+ * 附加匯入時更新既有人員：新檔案中有填的欄位覆蓋舊值，空白的保留舊值；
+ * ID、序號、手動勾選的貴賓標記不變 (新檔案標記為貴賓時才加上)。
+ */
+export function mergeParticipant(existing: RegisteredParticipant, incoming: RegisteredParticipant): RegisteredParticipant {
+  const pick = (a?: string, b?: string) => (b && b.trim() && b !== '未填寫職稱' ? b : a);
+  return {
+    ...existing,
+    title: pick(existing.title, incoming.title) || existing.title,
+    department: pick(existing.department, incoming.department),
+    phone: pick(existing.phone, incoming.phone),
+    email: pick(existing.email, incoming.email),
+    customFields: { ...(existing.customFields || {}), ...(incoming.customFields || {}) },
+    ...(incoming.isVip ? { isVip: true } : {})
+  };
 }
